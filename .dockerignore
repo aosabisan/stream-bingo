@@ -1,0 +1,5 @@
+data/admin-password.txt
+data/*.broken-*
+data/*.tmp
+node_modules
+.git

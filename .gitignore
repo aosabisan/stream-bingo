@@ -1,0 +1,7 @@
+# secrets and runtime files written by the server
+data/admin-password.txt
+data/*.tmp
+data/*.broken-*
+data/background.img
+node_modules/
+.DS_Store

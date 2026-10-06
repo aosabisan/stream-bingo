@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Bingo Mods</title>
+<link rel="stylesheet" href="/front.css">
+<style>
+/* Mod page = the whole front page (same markup and script as index.html) plus a panel for calling words. */
+.modbox { margin-bottom: 20px; }
+.modbox label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+.modbox input[type=text], .modbox input[type=password] { width: 100%; max-width: 420px; padding: 11px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.modbox .btn { margin-top: 12px; }
+.mmsg { margin: 10px 0 0; min-height: 1.4em; color: var(--muted); }
+.mmsg.ok { color: var(--ok); } .mmsg.err { color: #ff7a7a; }
+.mwords { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin-top: 12px; }
+.mwords button { text-align: left; padding: 11px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel2); color: var(--fg); cursor: pointer; display: flex; gap: 10px; }
+.mwords button.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 700; }
+.mwords button i { font-style: normal; opacity: .65; min-width: 2em; font-variant-numeric: tabular-nums; }
+.mwords button[disabled] { opacity: .6; cursor: default; }
+.mtop { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 id="title">Stream Bingo</h1>
+    <div class="pill" id="status" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Loading</span></div>
+  </header>
+
+
+  <section class="panel modbox" id="mLogin" aria-labelledby="mLoginH" hidden>
+    <h2 id="mLoginH">Mod login</h2>
+    <form id="mLoginForm">
+      <label for="mPw">Password</label>
+      <input type="password" id="mPw" autocomplete="current-password">
+      <button class="btn" type="submit">Log in</button>
+      <p class="mmsg err" id="mLoginMsg" role="alert"></p>
+      <p class="hint">Ask the streamer for the mod password. Everything below is the normal page anyone can see; logging in adds the buttons for calling words.</p>
+    </form>
+  </section>
+
+  <section class="panel modbox" id="mPanel" aria-labelledby="mPanelH" hidden>
+    <div class="mtop"><h2 id="mPanelH" style="margin:0">Call words</h2><button class="btn ghost" id="mLogout" type="button">Log out</button></div>
+    <p id="mGameLine" style="margin:8px 0 0">Loading</p>
+    <label for="mFind">Find a word</label>
+    <input type="text" id="mFind" placeholder="Type to filter the list" autocomplete="off">
+    <p class="mmsg" id="mMsg" role="status"></p>
+    <div class="mwords" id="mList"></div>
+  </section>
+
+  <div class="grid">
+    <div class="col">
+      <section class="panel" aria-labelledby="findH">
+        <h2 id="findH">Find your card</h2>
+        <form class="search" id="searchForm">
+          <label for="nameInput" style="position:absolute;left:-9999px">Chat username</label>
+          <input type="text" id="nameInput" placeholder="Your chat username" autocomplete="off" maxlength="40">
+          <button class="btn" type="submit">Show my card</button>
+        </form>
+        <p class="hint" id="findHint">Type your name exactly as it shows in chat. Works for Twitch, Kick, YouTube and Rumble.</p>
+        <div class="seg" id="platSeg" hidden></div>
+        <div id="cardArea" hidden>
+          <div class="dabbar" id="dabBar" hidden>
+            <span class="dablbl" id="dabLbl">Tap a square to mark it</span>
+            <span class="swatches" id="swatches" role="radiogroup" aria-label="Marker color"></span>
+            <button class="btn ghost sm" id="dabClear" type="button">Clear my marks</button>
+          </div>
+          <canvas id="card" aria-label="Your bingo card"></canvas>
+          <div class="stats" id="stats"></div>
+          <div class="actions">
+            <button class="btn ghost" id="saveBtn" type="button">Save image</button>
+            <button class="btn ghost" id="linkBtn" type="button">Copy link</button>
+          </div>
+        </div>
+        <p class="hint" id="dabHint" hidden></p>
+        <p class="hint" id="noCard" hidden></p>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="panel" aria-labelledby="liveH">
+        <h2 id="liveH">This game: top 20</h2>
+        <table><thead><tr><th></th><th>Player (click for card)</th><th class="n">Squares</th></tr></thead><tbody id="liveBody"></tbody></table>
+        <p class="empty" id="liveEmpty" hidden>No cards yet. Type !enter in chat.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="calledH">
+        <h2 id="calledH">Called so far</h2>
+        <div class="chips" id="called"></div>
+        <p class="empty" id="calledEmpty">Nothing called yet.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="lbH">
+        <h2 id="lbH">Leaderboard</h2>
+        <div class="tabs" role="group" aria-label="Leaderboard">
+          <button type="button" data-lb="weekly" aria-pressed="true">This week</button>
+          <button type="button" data-lb="allTime" aria-pressed="false">All time</button>
+          <button type="button" data-lb="lastWeek" aria-pressed="false">Last week</button>
+        </div>
+        <table><thead><tr><th></th><th>Player</th><th class="n" id="lbHead">Points</th></tr></thead><tbody id="lbBody"></tbody></table>
+        <p class="empty" id="lbEmpty" hidden>No scores yet.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="feedH">
+        <h2 id="feedH">Recent</h2>
+        <ul class="feed" id="feed"></ul>
+      </section>
+
+      <section class="panel" aria-labelledby="howH">
+        <h2 id="howH">How to play</h2>
+        <ol class="how" id="how"></ol>
+      </section>
+    </div>
+  </div>
+</div>
+<script>window.TITLE_SUFFIX = ' (mods)';</script>
+<script src="/card.js"></script>
+<script src="/front.js"></script>
+<script>
+(() => {
+  'use strict';
+  // $ and el come from front.js
+  let pw = ''; try { pw = sessionStorage.getItem('bingoModPw') || ''; } catch {}
+  let D = null, timer = null, busy = false;
+
+  async function api(action, body) {
+    const r = await fetch('/api/mod/' + action, { method: body ? 'POST' : 'GET', headers: { 'x-mod-password': pw, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 401) { showLogin(j.error); throw new Error(j.error || 'Wrong password.'); }
+    if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+    return j;
+  }
+  function say(text, ok) { const m = $('mMsg'); m.textContent = text; m.className = 'mmsg ' + (ok ? 'ok' : text ? 'err' : ''); }
+  function showLogin(err) { clearInterval(timer); $('mPanel').hidden = true; $('mLogin').hidden = false; $('mLoginMsg').textContent = err || ''; }
+
+  function render() {
+    const g = D.game;
+    $('mGameLine').textContent = g.active ? `Game #${g.number} is live. ${g.called.length} of ${g.phrases.length} words called.` : 'No game is running. Ask the streamer to start one.';
+    const q = $('mFind').value.trim().toLowerCase();
+    const list = $('mList'); list.replaceChildren();
+    g.phrases.forEach((t, i) => {
+      const n = i + 1, on = g.called.includes(n);
+      if (q && !t.toLowerCase().includes(q) && String(n) !== q) return;
+      const b = el('button', { type: 'button', className: on ? 'on' : '', disabled: !g.active }, el('i', { textContent: n }), (on ? '\u2713 ' : '') + t);
+      b.onclick = async () => {
+        if (busy) return; busy = true;
+        try { await api(on ? 'unmark' : 'mark', { word: String(n) }); say((on ? 'Un-called #' : 'Called #') + n, true); await refresh(); loadState(); loadCard(); }
+        catch (e) { say(e.message, false); await refresh().catch(() => {}); }
+        busy = false;
+      };
+      list.append(b);
+    });
+  }
+  async function refresh() { D = await api('status'); render(); }
+  function start() { $('mLogin').hidden = true; $('mPanel').hidden = false; clearInterval(timer); timer = setInterval(() => { if (!busy) refresh().catch(() => {}); }, 3000); }
+
+  $('mLoginForm').addEventListener('submit', async (e) => {
+    e.preventDefault(); pw = $('mPw').value;
+    try { await refresh(); try { sessionStorage.setItem('bingoModPw', pw); } catch {} start(); } catch {}
+  });
+  $('mFind').addEventListener('input', () => D && render());
+  $('mLogout').onclick = () => { pw = ''; try { sessionStorage.removeItem('bingoModPw'); } catch {} showLogin(''); };
+  (async () => { if (!pw) return showLogin(); try { await refresh(); start(); } catch { showLogin(); } })();
+})();
+</script>
+</body>
+</html>

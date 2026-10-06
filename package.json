@@ -1,0 +1,13 @@
+{
+  "name": "stream-bingo-web",
+  "version": "1.2.0",
+  "description": "Stream chat bingo website. Reads Twitch, Kick, YouTube and Rumble chat, runs the game, shows cards and leaderboards on a web page.",
+  "private": true,
+  "engines": {
+    "node": ">=22.4"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run.js"
+  }
+}
