@@ -25,6 +25,7 @@
 </head>
 <body>
 <div class="wrap">
+  <a class="crumb" href="/">&larr; All bingo rooms</a>
   <header>
     <h1 id="title">Stream Bingo</h1>
     <div class="pill" id="status" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Loading</span></div>
@@ -123,11 +124,11 @@
 (() => {
   'use strict';
   // $ and el come from front.js
-  let pw = ''; try { pw = sessionStorage.getItem('bingoModPw') || ''; } catch {}
+  let pw = ''; try { pw = sessionStorage.getItem('bingoModPw:' + location.pathname) || ''; } catch {}
   let D = null, timer = null, busy = false;
 
   async function api(action, body) {
-    const r = await fetch('/api/mod/' + action, { method: body ? 'POST' : 'GET', headers: { 'x-mod-password': pw, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetch('api/mod/' + action, { method: body ? 'POST' : 'GET', headers: { 'x-mod-password': pw, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
     const j = await r.json().catch(() => ({}));
     if (r.status === 401) { showLogin(j.error); throw new Error(j.error || 'Wrong password.'); }
     if (!r.ok) throw new Error(j.error || 'Something went wrong.');
@@ -159,10 +160,10 @@
 
   $('mLoginForm').addEventListener('submit', async (e) => {
     e.preventDefault(); pw = $('mPw').value;
-    try { await refresh(); try { sessionStorage.setItem('bingoModPw', pw); } catch {} start(); } catch {}
+    try { await refresh(); try { sessionStorage.setItem('bingoModPw:' + location.pathname, pw); } catch {} start(); } catch {}
   });
   $('mFind').addEventListener('input', () => D && render());
-  $('mLogout').onclick = () => { pw = ''; try { sessionStorage.removeItem('bingoModPw'); } catch {} showLogin(''); };
+  $('mLogout').onclick = () => { pw = ''; try { sessionStorage.removeItem('bingoModPw:' + location.pathname); } catch {} showLogin(''); };
   (async () => { if (!pw) return showLogin(); try { await refresh(); start(); } catch { showLogin(); } })();
 })();
 </script>

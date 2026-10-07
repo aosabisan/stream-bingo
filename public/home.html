@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stream Bingo</title>
+<meta name="description" content="Bingo for your stream chat. Viewers type !enter, mods call the words, and everyone's card fills in live.">
+<link rel="stylesheet" href="/front.css">
+<style>
+.hero { padding: 28px 0 8px; }
+.hero h1 { font-size: clamp(2.6rem, 9vw, 4.6rem); }
+.hero p { color: var(--muted); font-size: 1.1rem; max-width: 46ch; margin: 12px 0 0; }
+.balls { display: flex; gap: 8px; margin-bottom: 14px; }
+.balls span { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; font: 400 1.25rem/1 var(--display); color: #1a0a10; }
+.go { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
+.addr { display: flex; align-items: center; flex: 1 1 280px; min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding-left: 12px; }
+.addr span { color: var(--muted); white-space: nowrap; }
+.addr input { flex: 1; min-width: 0; padding: 12px 12px 12px 2px; background: transparent; border: 0; color: var(--fg); }
+.addr:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
+.addr input:focus-visible { outline: none; }
+.notice { background: var(--panel2); border: 1px solid var(--warn); border-radius: 8px; padding: 10px 14px; margin-top: 16px; }
+.rooms { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+a.room { display: flex; flex-direction: column; gap: 6px; padding: 14px; background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; color: var(--fg); text-decoration: none; min-width: 0; }
+a.room:hover { border-color: var(--accent); }
+a.room b { font: 400 1.2rem/1.15 var(--display); text-transform: uppercase; letter-spacing: .02em; overflow-wrap: anywhere; }
+a.room .path { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+a.room .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: .85rem; color: var(--muted); }
+.livetag { display: inline-flex; align-items: center; gap: 6px; color: var(--ok); font-weight: 700; }
+.livetag::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(91,224,160,.2); }
+.stack { display: flex; flex-direction: column; gap: 20px; margin-top: 24px; }
+label.f { display: block; font-size: .9rem; color: var(--muted); margin: 12px 0 5px; }
+input.t { width: 100%; padding: 11px 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+.msg { min-height: 1.4em; margin-top: 10px; color: var(--muted); }
+.msg.err { color: #ff8fa3; }
+.made { border: 1px solid var(--ok); border-radius: 10px; padding: 16px; background: var(--panel2); }
+.made h3 { margin: 0 0 8px; font: 400 1.3rem/1.1 var(--display); text-transform: uppercase; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 14px; align-items: center; margin: 12px 0; }
+.kv dt { color: var(--muted); font-size: .9rem; }
+.kv dd { margin: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; }
+.kv code { font-size: 1rem; overflow-wrap: anywhere; }
+.warn { color: var(--warn); font-weight: 600; }
+ol.steps { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 8px; }
+footer { color: var(--muted); font-size: .85rem; margin-top: 28px; }
+@media (max-width: 520px) { .kv { grid-template-columns: minmax(0, 1fr); } .addr span { font-size: .85rem; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="hero">
+    <div class="balls" aria-hidden="true"><span style="background:#ff4d6d">B</span><span style="background:#ffd23f">I</span><span style="background:#5be0a0">N</span><span style="background:#3ec1ff">G</span><span style="background:#c77dff">O</span></div>
+    <h1>Stream Bingo</h1>
+    <p>Bingo for your stream chat. Viewers type <code>!enter</code>, mods call the words, and everyone's card fills in live. Works with Twitch, Kick, YouTube and Rumble.</p>
+    <form class="go" id="goForm">
+      <label class="addr" for="goName"><span id="hostLbl">bingocard.stream/</span><input id="goName" placeholder="room name" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="30" aria-label="Room name"></label>
+      <button class="btn" type="submit">Go to room</button>
+    </form>
+    <p class="notice" id="missing" hidden></p>
+  </section>
+
+  <div class="stack">
+    <section class="panel" aria-labelledby="featH" id="featPanel" hidden>
+      <h2 id="featH">Featured rooms</h2>
+      <div class="rooms" id="featured"></div>
+    </section>
+
+    <section class="panel" aria-labelledby="liveH">
+      <h2 id="liveH">Live now</h2>
+      <div class="rooms" id="live"></div>
+      <p class="empty" id="liveEmpty">No other games are running right now.</p>
+    </section>
+
+    <div class="grid">
+      <section class="panel" aria-labelledby="makeH" id="makePanel">
+        <h2 id="makeH">Make your own room</h2>
+        <form id="makeForm" novalidate>
+          <label class="f" for="mkName">Room address</label>
+          <div class="addr"><span class="hostcopy">bingocard.stream/</span><input id="mkName" required minlength="3" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="yourchannel" aria-describedby="mkHint"></div>
+          <p class="hint" id="mkHint">3 to 30 letters, numbers, - or _. Your channel name works well.</p>
+          <label class="f" for="mkTitle">Game name (optional)</label>
+          <input class="t" id="mkTitle" maxlength="40" placeholder="e.g. Friday Night Bingo">
+          <div class="actions"><button class="btn" type="submit" id="mkBtn">Make my room</button></div>
+          <p class="msg" id="mkMsg" role="alert"></p>
+        </form>
+        <div class="made" id="made" hidden>
+          <h3>Your room is ready</h3>
+          <p class="warn">Save the admin password now. It is only shown once.</p>
+          <dl class="kv">
+            <dt>Viewers' page</dt><dd><a id="mdPublic" target="_blank" rel="noopener"></a></dd>
+            <dt>Admin page</dt><dd><a id="mdAdmin"></a></dd>
+            <dt>Admin password</dt><dd><code id="mdPw"></code><button class="btn ghost sm" type="button" id="mdCopy">Copy</button></dd>
+            <dt>Mod password</dt><dd><code id="mdMod"></code></dd>
+          </dl>
+          <p class="hint">Give mods the mod page link (your room address + <code>/mod</code>) and the mod password. You can see and change it on the admin page.</p>
+          <div class="actions"><a class="btn" id="mdGo">Open my admin page</a></div>
+        </div>
+        <p class="empty" id="closed" hidden>Making new rooms is switched off right now.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="howH">
+        <h2 id="howH">How it works</h2>
+        <ol class="steps">
+          <li>Make a room, open its admin page, and type your Twitch, Kick, YouTube or Rumble channel.</li>
+          <li>Edit the word list to fit your stream, and press <b>Start game</b>.</li>
+          <li>Viewers type <code>!enter</code> in chat to get a card. You and your mods call words with <code>!mark</code> or on the admin page.</li>
+          <li>Viewers search their name on your room page to watch their card fill in. Bingos and blackouts pay points, with weekly and all-time leaderboards.</li>
+        </ol>
+      </section>
+    </div>
+  </div>
+  <footer>Rooms that are not used for a few months are removed.</footer>
+</div>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const el = (tag, props, ...kids) => { const e = document.createElement(tag); Object.assign(e, props || {}); for (const k of kids) e.append(k); return e; };
+const HOST = location.host + '/';
+document.querySelectorAll('#hostLbl, .hostcopy').forEach((s) => (s.textContent = HOST));
+const clean = (v) => v.trim().replace(/^@/, '').replace(/^.*\//, '').toLowerCase();
+
+const missing = new URL(location.href).searchParams.get('missing');
+if (missing) { $('missing').hidden = false; $('missing').textContent = `There is no room called "${missing}" yet.` + ' You can make it below.'; $('mkName').value = clean(missing); history.replaceState(null, '', '/'); }
+
+$('goForm').onsubmit = (e) => { e.preventDefault(); const n = clean($('goName').value); if (n) location.href = '/' + encodeURIComponent(n) + '/'; };
+
+function card(r) {
+  const plats = [r.channels.twitch && 'Twitch', r.channels.kick && 'Kick'].filter(Boolean).join(' · ');
+  return el('a', { className: 'room', href: '/' + r.name + '/' },
+    el('b', { textContent: r.title }),
+    el('span', { className: 'path', textContent: HOST + r.name }),
+    el('span', { className: 'meta' }, r.live ? el('span', { className: 'livetag', textContent: `Live · ${r.players} playing` }) : el('span', { textContent: 'No game right now' }), plats ? el('span', { textContent: plats }) : ''));
+}
+async function load() {
+  try {
+    const d = await (await fetch('/api/rooms')).json();
+    $('featured').replaceChildren(...d.featured.map(card)); $('featPanel').hidden = !d.featured.length;
+    $('live').replaceChildren(...d.live.map(card)); $('liveEmpty').hidden = d.live.length > 0;
+    $('makeForm').hidden = !d.openRooms && $('made').hidden; $('closed').hidden = d.openRooms || !$('made').hidden;
+  } catch {}
+}
+load(); setInterval(load, 20000);
+
+$('makeForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const name = clean($('mkName').value), msg = $('mkMsg');
+  msg.className = 'msg'; msg.textContent = '';
+  if (!/^[a-z0-9][a-z0-9_-]{2,29}$/.test(name)) { msg.className = 'msg err'; msg.textContent = 'Use 3 to 30 letters, numbers, - or _, starting with a letter or number.'; $('mkName').focus(); return; }
+  $('mkBtn').disabled = true;
+  try {
+    const r = await fetch('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, title: $('mkTitle').value }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Something went wrong. Try again.');
+    const base = '/' + j.name + '/';
+    $('mdPublic').href = base; $('mdPublic').textContent = HOST + j.name;
+    $('mdAdmin').href = base + 'admin'; $('mdAdmin').textContent = HOST + j.name + '/admin';
+    $('mdPw').textContent = j.password; $('mdMod').textContent = j.modPassword;
+    // the admin page in this tab logs in by itself
+    try { sessionStorage.setItem('bingoPw:' + base, j.password); } catch {}
+    $('mdGo').href = base + 'admin';
+    $('makeForm').hidden = true; $('made').hidden = false; $('made').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (err) { msg.className = 'msg err'; msg.textContent = err.message; }
+  $('mkBtn').disabled = false;
+};
+$('mdCopy').onclick = async () => { const b = $('mdCopy'); try { await navigator.clipboard.writeText($('mdPw').textContent); b.textContent = 'Copied'; } catch { b.textContent = 'Select and copy it'; } setTimeout(() => (b.textContent = 'Copy'), 1800); };
+</script>
+</body>
+</html>

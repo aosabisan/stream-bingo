@@ -54,6 +54,7 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
 .secret code { font-size:1rem; letter-spacing:.06em; padding:5px 10px; min-width:9ch; user-select:all; }
 .secret code.masked { letter-spacing:.2em; user-select:none; color:var(--muted); }
 .btn.sm { padding:6px 12px; font-size:.88rem; }
+.roomtag { font:600 .95rem/1 var(--body, system-ui); text-transform:none; color:var(--muted); margin-left:8px; letter-spacing:0; }
 .pwfield { display:flex; gap:8px; } .pwfield input { flex:1 1 auto; } .pwfield .btn { flex:0 0 auto; }
 .headlinks { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
 </style>
@@ -67,14 +68,24 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
       <input type="password" id="pw" autocomplete="current-password">
       <div class="btns"><button class="btn" type="submit">Log in</button></div>
       <p class="msg err" id="loginMsg" role="alert"></p>
-      <p class="hint">The password is the ADMIN_PASSWORD setting, or the one printed when the server first started (data/admin-password.txt).</p>
+      <p class="hint">Use the room password you were shown when this room was made. The site owner's password works too.</p>
     </form>
   </div>
 
   <div id="app" hidden>
-    <header><h1>Bingo admin</h1><div class="headlinks"><a href="/" target="_blank" rel="noopener">View the public page</a><a href="/mod" target="_blank" rel="noopener">Mod page</a><button class="btn ghost sm" id="logoutBtn" type="button">Log out</button></div></header>
+    <header><h1>Bingo admin <span class="roomtag" id="roomTag"></span></h1><div class="headlinks"><a href="./" target="_blank" rel="noopener">View the public page</a><a href="mod" target="_blank" rel="noopener">Mod page</a><button class="btn ghost sm" id="logoutBtn" type="button">Log out</button></div></header>
     <div class="cols">
       <div>
+        <section class="panel">
+          <h2>Your room</h2>
+          <p class="hint" style="margin-top:0">Viewers find their cards at <b id="roomLink"></b>. Share that link in chat.</p>
+          <p class="hint" id="roomChat"></p>
+          <div class="checks" id="listedRow"><label><input type="checkbox" id="roomListed"> Show this room on the home page while a game is live</label></div>
+          <p class="hint" id="roomKind"></p>
+          <label for="adminPwNew" style="margin-top:14px">Change this page's password (at least 8 characters)</label>
+          <div class="pwfield"><input type="password" id="adminPwNew" autocomplete="new-password" spellcheck="false" minlength="8"><button class="btn ghost sm" id="adminPwShow" type="button" aria-pressed="false" aria-controls="adminPwNew">Show</button><button class="btn sm" id="adminPwBtn" type="button">Change</button></div>
+          <p class="msg" id="roomMsg" role="status"></p>
+        </section>
         <section class="panel">
           <h2>Page name</h2>
           <label for="pTitle">Name shown at the top of the page, in the browser tab and on every card</label>
@@ -220,12 +231,14 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
 'use strict';
 const $ = (id) => document.getElementById(id);
 const el = (tag, props, ...kids) => { const e = document.createElement(tag); Object.assign(e, props || {}); for (const k of kids) e.append(k); return e; };
-let pw = ''; try { pw = sessionStorage.getItem('bingoPw') || ''; } catch {}
+const ROOM_BASE = location.pathname.replace(/[^/]*$/, '');   // "/roomname/"
+const PW_KEY = 'bingoPw:' + ROOM_BASE;
+let pw = ''; try { pw = sessionStorage.getItem(PW_KEY) || ''; } catch {}
 let D = null, formsFilled = false, timer;
 let modPwVisible = false;   // the mod password stays hidden until Show is pressed (never remembered across reloads)
 
 async function api(action, body, method) {
-  const r = await fetch('/api/admin/' + action, { method: method || 'POST', headers: { 'x-admin-password': pw, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  const r = await fetch('api/admin/' + action, { method: method || 'POST', headers: { 'x-admin-password': pw, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401) { showLogin(j.error); throw new Error(j.error || 'Wrong password.'); }
   if (!r.ok) throw new Error(j.error || 'Something went wrong.');
@@ -237,7 +250,7 @@ async function run(msgId, fn, okText) { try { const r = await fn(); say(msgId, o
 function showLogin(err) { clearInterval(timer); $('app').hidden = true; $('login').hidden = false; $('loginMsg').textContent = err || ''; }
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault(); pw = $('pw').value;
-  try { await refresh(); try { sessionStorage.setItem('bingoPw', pw); } catch {} $('login').hidden = true; $('app').hidden = false; timer = setInterval(() => refresh().catch(() => {}), 4000); } catch {}
+  try { await refresh(); try { sessionStorage.setItem(PW_KEY, pw); } catch {} $('login').hidden = true; $('app').hidden = false; timer = setInterval(() => refresh().catch(() => {}), 4000); } catch {}
 });
 
 function fillForms(s) {
@@ -284,11 +297,30 @@ function render() {
   for (const l of D.chatLog) lg.append(el('tr', {}, el('td', { textContent: new Date(l.t).toLocaleTimeString() }), el('td', { textContent: `${l.platform}/${l.name}: ${l.text}` }), el('td', { className: 'st ' + (l.ok ? 'connected' : 'error'), textContent: l.ok ? 'ok' : l.error })));
   if (!D.chatLog.length) lg.append(el('tr', {}, el('td', { className: 'hint', textContent: 'No bingo commands seen yet.' })));
   showModPw();
-  $('modLink').textContent = location.origin + '/mod';
-  $('modPwBtn').disabled = $('modPwNew').disabled = D.modPasswordLocked;
-  if (D.modPasswordLocked) say('modPwMsg', 'Set by the MOD_PASSWORD setting on the server.', true);
+  $('modLink').textContent = location.origin + ROOM_BASE + 'mod';
+  renderRoom();
   drawPreview();
 }
+
+function renderRoom() {
+  const r = D.room;
+  $('roomTag').textContent = r.name;
+  $('roomLink').textContent = location.origin + ROOM_BASE;
+  $('roomChat').textContent = r.kind === 'dedicated' ? 'Chat stays connected all the time.'
+    : `Chat is ${r.chatAwake ? 'connected' : 'asleep'}. It stays connected while a game is running and for ${r.idleHours} hours after this page was last open, then sleeps until you open this page or start a game.`;
+  $('roomListed').checked = r.listed;
+  $('listedRow').hidden = r.kind === 'dedicated';
+  $('roomKind').textContent = r.kind === 'dedicated' ? 'This is a featured room: it is always listed on the home page.'
+    : (r.expireDays ? `Rooms that are not used for ${r.expireDays} days are removed.` : '');
+}
+$('roomListed').onchange = () => run('roomMsg', () => api('room', { listed: $('roomListed').checked }), 'Saved.');
+$('adminPwShow').onclick = () => { const i = $('adminPwNew'), on = i.type === 'password'; i.type = on ? 'text' : 'password'; $('adminPwShow').textContent = on ? 'Hide' : 'Show'; $('adminPwShow').setAttribute('aria-pressed', String(on)); };
+$('adminPwBtn').onclick = () => run('roomMsg', async () => {
+  const np = $('adminPwNew').value;
+  const r = await api('adminpassword', { password: np });
+  pw = np; try { sessionStorage.setItem(PW_KEY, pw); } catch {}
+  $('adminPwNew').value = ''; return r;
+}, 'Password changed. Use the new one next time you log in.');
 
 function showModPw() {
   const c = $('modPwShown'), b = $('modPwToggle');
@@ -343,14 +375,14 @@ $('modPwNewToggle').onclick = () => {
 $('callFind').addEventListener('input', () => D && render());
 $('logoutBtn').onclick = () => {
   pw = ''; D = null; formsFilled = false; modPwVisible = false;
-  try { sessionStorage.removeItem('bingoPw'); } catch {}
+  try { sessionStorage.removeItem(PW_KEY); } catch {}
   $('pw').value = ''; showLogin('Logged out.');
 };
 $('gpBtn').onclick = () => run('gpMsg', () => api('givepoints', { name: $('gpName').value, amount: $('gpAmt').value }), 'Points updated.');
 $('bgUpload').onclick = async () => {
   const f = $('bgFile').files[0]; if (!f) return say('bgMsg', 'Choose an image first.');
   try {
-    const r = await fetch('/api/admin/background', { method: 'POST', headers: { 'x-admin-password': pw, 'Content-Type': f.type }, body: f });
+    const r = await fetch('api/admin/background', { method: 'POST', headers: { 'x-admin-password': pw, 'Content-Type': f.type }, body: f });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Upload failed.');
     say('bgMsg', 'Background updated.', true); await refresh();
   } catch (e) { say('bgMsg', e.message); }

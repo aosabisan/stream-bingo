@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Site admin · Stream Bingo</title>
+<link rel="stylesheet" href="/front.css">
+<style>
+label.f { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+input.t, select.t { width: 100%; padding: 9px 11px; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+.row > div { flex: 1 1 150px; min-width: 0; }
+.msg { min-height: 1.4em; margin-top: 8px; color: var(--muted); }
+.msg.ok { color: var(--ok); } .msg.err { color: #ff8fa3; }
+.checks label { display: flex; gap: 8px; align-items: center; }
+.tablewrap { overflow-x: auto; }
+table.rooms td { vertical-align: top; font-size: .92rem; }
+table.rooms td.acts { min-width: 250px; }
+a.btn { text-decoration: none; display: inline-block; }
+table.rooms td.acts .btn { margin: 0 4px 4px 0; }
+.btn.sm { padding: 5px 10px; font-size: .85rem; margin: 0; }
+.btn.danger { background: #ff6b7f; color: #2a0008; }
+.tag { white-space: nowrap; display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: .75rem; font-weight: 700; background: var(--panel2); border: 1px solid var(--line); }
+.tag.feat { border-color: var(--warn); color: var(--warn); }
+.tag.live { border-color: var(--ok); color: var(--ok); }
+.out { border: 1px solid var(--ok); border-radius: 8px; padding: 10px 14px; margin-top: 10px; background: var(--panel2); overflow-wrap: anywhere; }
+.del[hidden] { display: none; }
+.del { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.del input { width: 9em; padding: 5px 8px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
+.stack { display: flex; flex-direction: column; gap: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Site admin</h1><a href="/">Home page</a></header>
+
+  <section class="panel" id="login" hidden>
+    <h2>Log in</h2>
+    <form id="loginForm">
+      <label class="f" for="pw">Site password (SITE_ADMIN_PASSWORD, or ADMIN_PASSWORD)</label>
+      <input class="t" type="password" id="pw" autocomplete="current-password">
+      <div class="actions"><button class="btn" type="submit">Log in</button></div>
+      <p class="msg err" id="loginMsg" role="alert"></p>
+    </form>
+  </section>
+
+  <div class="stack" id="app" hidden>
+    <section class="panel">
+      <h2>Rooms</h2>
+      <p class="hint" id="summary"></p>
+      <div class="tablewrap">
+        <table class="rooms"><thead><tr><th>Room</th><th>Type</th><th>Game</th><th>Chat</th><th>Last used</th><th>Actions</th></tr></thead><tbody id="rows"></tbody></table>
+      </div>
+      <p class="msg" id="rowMsg" role="status"></p>
+      <div class="out" id="pwOut" hidden></div>
+    </section>
+
+    <div class="grid">
+      <section class="panel">
+        <h2>Add a featured room</h2>
+        <p class="hint" style="margin-top:0">Featured rooms are always listed on the home page, keep chat connected all the time and never expire. Use them for the streamers you host.</p>
+        <div class="row">
+          <div><label class="f" for="nName">Room address</label><input class="t" id="nName" maxlength="30" autocapitalize="none" spellcheck="false" placeholder="channelname"></div>
+          <div><label class="f" for="nTitle">Game name (optional)</label><input class="t" id="nTitle" maxlength="40"></div>
+        </div>
+        <div class="row">
+          <div><label class="f" for="nPlat">Chat</label><select class="t" id="nPlat"><option value="kick">Kick</option><option value="twitch">Twitch</option></select></div>
+          <div><label class="f" for="nChan">Channel name (optional)</label><input class="t" id="nChan" maxlength="60" autocapitalize="none" spellcheck="false"></div>
+        </div>
+        <div class="actions"><button class="btn" id="nBtn" type="button">Add room</button></div>
+        <p class="msg" id="nMsg" role="status"></p>
+        <div class="out" id="nOut" hidden></div>
+      </section>
+
+      <section class="panel">
+        <h2>Site settings</h2>
+        <div class="checks"><label><input type="checkbox" id="sOpen"> Anyone can make a room from the home page</label></div>
+        <label class="f" for="sMax">Most community rooms allowed</label>
+        <div class="row"><div><input class="t" type="number" id="sMax" min="0"></div><button class="btn ghost" id="sSave" type="button">Save</button></div>
+        <p class="msg" id="sMsg" role="status"></p>
+        <p class="hint" id="limits"></p>
+      </section>
+    </div>
+  </div>
+</div>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const el = (tag, props, ...kids) => { const e = document.createElement(tag); Object.assign(e, props || {}); for (const k of kids) e.append(k); return e; };
+let pw = ''; try { pw = sessionStorage.getItem('bingoSitePw') || ''; } catch {}
+let D = null, timer, formsFilled = false;
+
+async function api(action, body) {
+  const r = await fetch('/api/site/' + action, { method: 'POST', headers: { 'x-admin-password': pw, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { showLogin(j.error); throw new Error(j.error || 'Wrong password.'); }
+  if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+  return j;
+}
+const say = (id, text, ok) => { const m = $(id); m.textContent = text; m.className = 'msg ' + (ok ? 'ok' : text ? 'err' : ''); };
+async function run(msgId, fn, okText) { try { const r = await fn(); say(msgId, okText || 'Done.', true); await refresh(); return r; } catch (e) { say(msgId, e.message, false); } }
+function showLogin(err) { clearInterval(timer); $('app').hidden = true; $('login').hidden = false; $('loginMsg').textContent = err || ''; }
+$('loginForm').onsubmit = async (e) => { e.preventDefault(); pw = $('pw').value; try { await refresh(); try { sessionStorage.setItem('bingoSitePw', pw); } catch {} start(); } catch {} };
+function start() { $('login').hidden = true; $('app').hidden = false; clearInterval(timer); timer = setInterval(() => refresh().catch(() => {}), 10000); }
+
+function ago(t) { if (!t) return 'never'; const s = (Date.now() - t) / 1000; if (s < 90) return 'just now'; if (s < 5400) return Math.round(s / 60) + ' min ago'; if (s < 129600) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' days ago'; }
+function showPw(name, password) { const o = $('pwOut'); o.hidden = false; o.replaceChildren(`New admin password for ${name}: `, el('code', { textContent: password }), ' (only shown now)'); }
+
+function render() {
+  const rows = $('rows'); rows.replaceChildren();
+  const list = [...D.rooms].sort((a, b) => (a.kind === 'dedicated' ? 0 : 1) - (b.kind === 'dedicated' ? 0 : 1) || b.live - a.live || (b.lastActive || 0) - (a.lastActive || 0));
+  for (const r of list) {
+    const feat = r.kind === 'dedicated';
+    const chans = [r.channels.twitch && 'Twitch ' + r.channels.twitch, r.channels.kick && 'Kick ' + r.channels.kick, r.channels.youtube && 'YouTube', r.channels.rumble && 'Rumble'].filter(Boolean).join(', ') || 'no chat set';
+    const delIn = el('input', { placeholder: 'type ' + r.name }); delIn.setAttribute('aria-label', 'Type ' + r.name + ' to confirm deleting it');
+    const delBox = el('div', { className: 'del', hidden: true }, delIn, el('button', { className: 'btn sm danger', type: 'button', textContent: 'Delete' }));
+    delBox.lastChild.onclick = () => run('rowMsg', () => api('delete', { name: r.name, confirm: delBox.firstChild.value }), `Deleted ${r.name}. Its files were moved to the deleted-rooms folder.`);
+    const btn = (text, fn, cls = 'ghost') => { const b = el('button', { className: 'btn sm ' + cls, type: 'button', textContent: text }); b.onclick = fn; return b; };
+    rows.append(el('tr', {},
+      el('td', {}, el('a', { href: '/' + r.name + '/', textContent: '/' + r.name, target: '_blank', rel: 'noopener' }), el('div', { className: 'hint', textContent: r.title }), el('div', { className: 'hint', textContent: chans })),
+      el('td', {}, el('span', { className: 'tag' + (feat ? ' feat' : ''), textContent: feat ? 'featured' : 'community' }), r.listed ? '' : el('div', { className: 'hint', textContent: 'hidden from home' })),
+      el('td', {}, r.live ? el('span', { className: 'tag live', textContent: `live · ${r.players}` }) : el('span', { className: 'hint', textContent: r.game ? `#${r.game} done` : 'none yet' })),
+      el('td', { textContent: r.chat }),
+      el('td', { textContent: ago(r.lastActive) }),
+      el('td', { className: 'acts' },
+        el('a', { className: 'btn sm ghost', href: '/' + r.name + '/admin', target: '_blank', rel: 'noopener', textContent: 'Admin' }), ' ',
+        btn(feat ? 'Unfeature' : 'Feature', () => run('rowMsg', () => api('update', { name: r.name, dedicated: !feat }), feat ? `${r.name} is a community room now.` : `${r.name} is featured now.`)),
+        btn(r.listed ? 'Hide' : 'List', () => run('rowMsg', () => api('update', { name: r.name, listed: !r.listed }))),
+        btn('New password', async () => { try { const j = await api('resetpw', { name: r.name }); showPw(r.name, j.password); say('rowMsg', '', true); } catch (e) { say('rowMsg', e.message); } }),
+        btn('Delete…', () => { delBox.hidden = !delBox.hidden; if (!delBox.hidden) delBox.firstChild.focus(); }),
+        delBox)));
+  }
+  const feat = D.rooms.filter((r) => r.kind === 'dedicated').length;
+  $('summary').textContent = `${D.rooms.length} rooms: ${feat} featured, ${D.rooms.length - feat} community. ${D.rooms.filter((r) => r.live).length} live now.` + (D.site.legacyRoom ? ` The old single-game links (/admin, /mod, /?u=) lead to /${D.site.legacyRoom}.` : '');
+  $('limits').textContent = `Community rooms disconnect chat after ${D.idleHours} hours unused` + (D.expireDays ? ` and are removed after ${D.expireDays} days unused.` : ' and are never removed.') + ' Change with CHAT_IDLE_HOURS and ROOM_EXPIRE_DAYS on the server.';
+  if (!formsFilled) { $('sOpen').checked = D.site.openRooms; $('sMax').value = D.site.maxRooms; formsFilled = true; }
+}
+async function refresh() { D = await api('status'); render(); }
+
+$('nBtn').onclick = async () => {
+  try {
+    const j = await api('create', { name: $('nName').value, title: $('nTitle').value, dedicated: true, platform: $('nPlat').value, channel: $('nChan').value });
+    const o = $('nOut'); o.hidden = false;
+    o.replaceChildren(`Room /${j.name} is ready. Admin page: `, el('a', { href: '/' + j.name + '/admin', textContent: location.host + '/' + j.name + '/admin', target: '_blank', rel: 'noopener' }), el('br'), 'Admin password: ', el('code', { textContent: j.password }), ' · Mod password: ', el('code', { textContent: j.modPassword }), el('br'), 'Send these to the streamer. The admin password is only shown now.');
+    say('nMsg', '', true); $('nName').value = $('nTitle').value = $('nChan').value = ''; await refresh();
+  } catch (e) { say('nMsg', e.message); }
+};
+$('sOpen').onchange = () => run('sMsg', () => api('settings', { openRooms: $('sOpen').checked }), 'Saved.');
+$('sSave').onclick = () => run('sMsg', () => api('settings', { maxRooms: $('sMax').value }), 'Saved.');
+
+(async () => { if (!pw) return showLogin(); try { await refresh(); start(); } catch { showLogin(); } })();
+</script>
+</body>
+</html>

@@ -8,7 +8,7 @@
       const img = new Image();
       img.onload = () => { cache.v = version; cache.img = img; resolve(img); };
       img.onerror = () => { cache.v = version; cache.img = null; resolve(null); };
-      img.src = '/background?v=' + version;
+      img.src = 'background?v=' + version;   // relative: each room has its own
     });
   }
   function wrap(ctx, text, maxW) {

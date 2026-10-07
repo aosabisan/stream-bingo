@@ -9,9 +9,11 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
 
 (async () => {
   const twitch = require('../src/chat/twitch'), kick = require('../src/chat/kick'), yt = require('../src/chat/youtube'), rumble = require('../src/chat/rumble');
-  const game = require('../src/game');
-  game.load();
-  game.state.settings.channels.twitch = 'teststreamer';   // a fresh install has no channels set
+  // the game tests run in one room; the room tests further down make more
+  const rooms = require('../src/rooms');
+  rooms.init({ legacyPassword: 'pw-test' });
+  const game = rooms.create('teststreamer', { password: 'room-pw-test' }).entry.game;
+  game.state.settings.channels.twitch = 'teststreamer';   // a new room has no channels set
 
   await t('twitch line parses badges and name', () => {
     const m = twitch.parseLine('@badge-info=;badges=moderator/1,vip/1;display-name=CoolMod;id=abc;user-id=42 :coolmod!coolmod@coolmod.tmi.twitch.tv PRIVMSG #teststreamer :!mark 7');
@@ -145,14 +147,14 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
   });
   await t('state survives a save and reload', () => {
     game.saveNow();
-    const saved = JSON.parse(fs.readFileSync(path.join(tmp, 'state.json'), 'utf8'));
+    const saved = JSON.parse(fs.readFileSync(path.join(tmp, 'rooms', 'teststreamer', 'state.json'), 'utf8'));
     assert.ok(saved.accounts['twitch:alice'] && saved.game.number === 1);
   });
 
   // ---- HTTP ----
   require('../server.js');
   await new Promise((r) => setTimeout(r, 400));
-  const base = 'http://localhost:3911';
+  const site = 'http://localhost:3911', base = site + '/teststreamer';
   const J = async (url, opt) => { const r = await fetch(base + url, opt); return { status: r.status, body: await r.json().catch(() => null) }; };
   const adm = (action, body) => J('/api/admin/' + action, { method: 'POST', headers: { 'x-admin-password': 'pw-test', 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
 
@@ -200,7 +202,8 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
     const got = await fetch(base + '/background'); assert.strictEqual(got.status, 200); assert.strictEqual(got.headers.get('content-type'), 'image/png');
   });
   await t('static pages serve and path traversal is refused', async () => {
-    for (const p of ['/', '/admin', '/card.js']) assert.strictEqual((await fetch(base + p)).status, 200);
+    for (const p of ['/', '/admin', '/mod']) assert.strictEqual((await fetch(base + p)).status, 200, p);
+    for (const p of ['/', '/site-admin', '/card.js', '/front.css']) assert.strictEqual((await fetch(site + p)).status, 200, p);
     assert.notStrictEqual((await fetch(base + '/..%2f..%2fetc%2fpasswd')).status, 200);
     assert.notStrictEqual((await fetch(base + '/%2e%2e/server.js')).status, 200);
   });
@@ -247,13 +250,13 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
   });
   await t('mod page is served at /mod and has everything the front page has', async () => {
     assert.strictEqual((await fetch(base + '/mod')).status, 200);
-    for (const f of ['/front.css', '/front.js', '/card.js']) assert.strictEqual((await fetch(base + f)).status, 200, f);
+    for (const f of ['/front.css', '/front.js', '/card.js']) assert.strictEqual((await fetch(site + f)).status, 200, f);
     const ids = (h) => new Set([...h.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]));
     const front = ids(fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8'));
     const mod = fs.readFileSync(path.join(__dirname, '..', 'public', 'mod.html'), 'utf8');
     const have = ids(mod);
     for (const id of front) assert.ok(have.has(id), 'mod page is missing #' + id);
-    assert.ok(mod.includes('/front.js') && mod.includes('/front.css') && mod.includes('/api/mod/'));
+    assert.ok(mod.includes('/front.js') && mod.includes('/front.css') && mod.includes("'api/mod/'"));
   });
 
   await t('public state has a top-20 board of the current game, most squares first', async () => {
@@ -363,9 +366,9 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
     game.endGame();
   });
   await t('health check answers without a password', async () => {
-    const r = await J('/healthz');
+    const r = await fetch(site + '/healthz').then(async (x) => ({ status: x.status, body: await x.json() }));
     assert.strictEqual(r.status, 200); assert.strictEqual(r.body.ok, true);
-    assert.ok(['live', 'idle'].includes(r.body.game) && 'twitch' in r.body.chat);
+    assert.ok(r.body.rooms >= 1 && typeof r.body.live === 'number');
   });
   await t('admin page keeps the mod password hidden until Show is pressed', async () => {
     const h = await (await fetch(base + '/admin')).text();
@@ -468,6 +471,115 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
       assert.strictEqual(await adm2('3.3.3.3, 8.8.8.8'), 429);
       assert.strictEqual(await adm2('8.8.8.8', 'adm-hops'), 200);
     } finally { child.kill('SIGTERM'); }
+  });
+
+  // ---------------- rooms ----------------
+  await t('rooms: community rooms sleep chat when unused, wake on an admin visit, and expire; featured rooms never do', async () => {
+    const a = rooms.create('sleepy-room').entry, f = rooms.create('featured-room', { kind: 'dedicated' }).entry;
+    a.game.state.settings.channels.twitch = 'nobody_here_123';
+    const now = Date.now();
+    rooms.tick(now); assert.strictEqual(a.chat.running, true, 'a new room is awake');
+    a.game.state.room.lastActive = now - rooms.CHAT_IDLE_MS - 60000; f.game.state.room.lastActive = 1;
+    rooms.tick(now); assert.strictEqual(a.chat.running, false, 'asleep after the idle time'); assert.strictEqual(f.chat.running, true, 'featured stays on');
+    a.game.startGame(); rooms.tick(now); assert.strictEqual(a.chat.running, true, 'a running game keeps it awake');
+    a.game.endGame(); a.game.state.room.lastActive = now - rooms.CHAT_IDLE_MS - 60000; rooms.tick(now);
+    rooms.wake(a); assert.strictEqual(a.chat.running, true, 'an admin visit wakes it');
+    // expiry: unused for longer than ROOM_EXPIRE_DAYS -> moved to deleted-rooms; featured rooms stay
+    a.game.state.room.lastActive = now - rooms.EXPIRE_MS - 86400000;
+    rooms.tick(now);
+    assert.strictEqual(rooms.get('sleepy-room'), undefined); assert.ok(rooms.get('featured-room'));
+    assert.ok(fs.readdirSync(path.join(tmp, 'deleted-rooms')).some((d) => d.startsWith('sleepy-room-')));
+    rooms.remove('featured-room');
+  });
+
+  await t('rooms: names are checked and reserved words refused', () => {
+    for (const bad of ['ab', 'admin', 'site-admin', 'api', 'has space', 'dot.name', '-dash', 'x'.repeat(31), '']) assert.throws(() => rooms.checkName(bad), undefined, bad);
+    assert.strictEqual(rooms.checkName('@Cool_Streamer-1'), 'cool_streamer-1');
+  });
+
+  await t('rooms over HTTP: make, isolate, list, site admin, limits, and links from before rooms', async () => {
+    const { spawn } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bingo-rooms-'));
+    // a single game from before rooms, as an existing site has it
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ settings: { title: 'OLD GAME', channels: { twitch: '', kick: 'Old_Streamer', youtube: '', rumble: '', kickChatroomId: '1' }, modPassword: 'old-mod-pw' }, accounts: { 'kick:5': { name: 'Regular', platform: 'kick', points: 777, bingos: 3, blackouts: 1, weekly: 0 } }, game: { active: false, number: 4, phrases: [], called: [], players: {}, bingoOrder: [], blackoutOrder: [] } }));
+    const port = 3913, b3 = 'http://localhost:' + port;
+    const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+      env: { ...process.env, DATA_DIR: dir, PORT: String(port), ADMIN_PASSWORD: 'old-admin-pw', SITE_ADMIN_PASSWORD: 'owner-pw', TRUST_PROXY_HOPS: '', MOD_PASSWORD: '' }, stdio: 'ignore',
+    });
+    const R = async (u, opt = {}) => { const r = await fetch(b3 + u, { redirect: 'manual', ...opt }); return { status: r.status, loc: r.headers.get('location'), body: await r.json().catch(() => null) }; };
+    const post = (u, body, pw, hdr = 'x-admin-password') => R(u, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(pw ? { [hdr]: pw } : {}) }, body: JSON.stringify(body || {}) });
+    try {
+      for (let i = 0; i < 50; i++) { try { if ((await fetch(b3 + '/healthz')).ok) break; } catch {} await new Promise((r) => setTimeout(r, 100)); }
+      // the old game became the featured room "old_streamer", keeping its players, its admin password and its mod password
+      const old = await R('/old_streamer/api/state');
+      assert.strictEqual(old.body.title, 'OLD GAME'); assert.strictEqual(old.body.allTime[0].points, 777);
+      assert.strictEqual((await post('/old_streamer/api/admin/status', {}, 'old-admin-pw')).status, 200);
+      assert.strictEqual((await R('/old_streamer/api/mod/status', { headers: { 'x-mod-password': 'old-mod-pw' } })).status, 200);
+      assert.strictEqual((await post('/api/site/status', {}, 'old-admin-pw')).status, 401, 'old room password is not the site password');
+      // old addresses lead there
+      assert.deepStrictEqual([(await R('/?u=Regular')).loc, (await R('/admin')).loc, (await R('/mod')).loc], ['/old_streamer/?u=Regular', '/old_streamer/admin', '/old_streamer/mod']);
+      assert.strictEqual((await R('/api/state')).body.title, 'OLD GAME');
+      assert.strictEqual((await R('/Old_Streamer')).loc, '/old_streamer/');
+      assert.strictEqual((await R('/no-such-room/')).loc, '/?missing=no-such-room');
+      assert.strictEqual((await R('/index.html')).status, 404);
+      // anyone can make a room; the password comes back once
+      const mk = await post('/api/rooms', { name: 'NewStreamer', title: 'Friday Bingo' });
+      assert.strictEqual(mk.status, 200); assert.strictEqual(mk.body.name, 'newstreamer'); assert.ok(mk.body.password.length >= 10 && mk.body.modPassword);
+      assert.strictEqual((await post('/api/rooms', { name: 'newstreamer' })).status, 409);
+      assert.strictEqual((await post('/api/rooms', { name: 'admin' })).status, 400);
+      assert.strictEqual((await R('/newstreamer/api/state')).body.title, 'Friday Bingo');
+      // each room's password opens only that room; the site password opens every room
+      assert.strictEqual((await post('/newstreamer/api/admin/status', {}, mk.body.password)).status, 200);
+      assert.strictEqual((await post('/old_streamer/api/admin/status', {}, mk.body.password)).status, 401);
+      assert.strictEqual((await post('/newstreamer/api/admin/status', {}, 'old-admin-pw')).status, 401);
+      assert.strictEqual((await post('/newstreamer/api/admin/status', {}, 'owner-pw')).status, 200);
+      assert.strictEqual((await post('/api/site/status', {}, mk.body.password)).status, 401);
+      // games are separate
+      assert.strictEqual((await post('/newstreamer/api/admin/start', {}, mk.body.password)).status, 200);
+      assert.strictEqual((await post('/newstreamer/api/admin/simulate', { name: 'Fan', text: '!enter' }, mk.body.password)).body.result.ok, true);
+      assert.strictEqual((await R('/newstreamer/api/state')).body.game.players, 1);
+      assert.strictEqual((await R('/old_streamer/api/state')).body.game.active, false);
+      assert.strictEqual((await R('/old_streamer/api/card?name=Fan')).body.matches.length, 0);
+      // the home page lists featured rooms, and community rooms while live
+      let d = (await R('/api/rooms')).body;
+      assert.deepStrictEqual(d.featured.map((r) => r.name), ['old_streamer']); assert.deepStrictEqual(d.live.map((r) => r.name), ['newstreamer']);
+      assert.strictEqual((await post('/newstreamer/api/admin/room', { listed: false }, mk.body.password)).status, 200);
+      assert.strictEqual((await R('/api/rooms')).body.live.length, 0, 'unlisted rooms are not shown');
+      // the room owner can change their password
+      assert.strictEqual((await post('/newstreamer/api/admin/adminpassword', { password: 'short' }, mk.body.password)).status, 400);
+      assert.strictEqual((await post('/newstreamer/api/admin/adminpassword', { password: 'a-new-room-pw' }, mk.body.password)).status, 200);
+      assert.strictEqual((await post('/newstreamer/api/admin/status', {}, mk.body.password)).status, 401);
+      assert.strictEqual((await post('/newstreamer/api/admin/status', {}, 'a-new-room-pw')).status, 200);
+      // making rooms is limited per address (3 an hour)
+      assert.strictEqual((await post('/api/rooms', { name: 'second-room' })).status, 200);
+      assert.strictEqual((await post('/api/rooms', { name: 'third-room' })).status, 200);
+      assert.strictEqual((await post('/api/rooms', { name: 'fourth-room' })).status, 429);
+      // site admin: list, feature, new password, delete (needs the name typed), switch off room making
+      const st = await post('/api/site/status', {}, 'owner-pw');
+      assert.deepStrictEqual(st.body.rooms.map((r) => r.name).sort(), ['newstreamer', 'old_streamer', 'second-room', 'third-room']);
+      assert.strictEqual(st.body.site.legacyRoom, 'old_streamer');
+      assert.strictEqual((await post('/api/site/update', { name: 'second-room', dedicated: true }, 'owner-pw')).status, 200);
+      d = (await R('/api/rooms')).body; assert.ok(d.featured.some((r) => r.name === 'second-room'));
+      const np = await post('/api/site/resetpw', { name: 'third-room' }, 'owner-pw');
+      assert.strictEqual((await post('/third-room/api/admin/status', {}, np.body.password)).status, 200);
+      assert.strictEqual((await post('/api/site/delete', { name: 'third-room', confirm: 'nope' }, 'owner-pw')).status, 400);
+      assert.strictEqual((await post('/api/site/delete', { name: 'third-room', confirm: 'third-room' }, 'owner-pw')).status, 200);
+      assert.strictEqual((await R('/third-room/api/state')).status, 404);
+      assert.ok(fs.readdirSync(path.join(dir, 'deleted-rooms')).some((n) => n.startsWith('third-room-')));
+      assert.strictEqual((await post('/api/site/create', { name: 'hosted-one', dedicated: true, platform: 'kick', channel: 'hosted_one' }, 'owner-pw')).status, 200);
+      assert.strictEqual((await R('/hosted-one/api/state')).body.channels.kick, 'hosted_one');
+      assert.strictEqual((await post('/api/site/settings', { openRooms: false }, 'owner-pw')).status, 200);
+      assert.strictEqual((await R('/api/rooms')).body.openRooms, false);
+      assert.strictEqual((await post('/api/rooms', { name: 'blocked-room' })).status, 403);
+      // the wrong-password counters are per room: guessing at one room does not lock another
+      for (let i = 0; i < 8; i++) await post('/second-room/api/admin/status', {}, 'guess' + i);
+      assert.strictEqual((await post('/second-room/api/admin/status', {}, 'guess9')).status, 429);
+      assert.strictEqual((await post('/hosted-one/api/admin/status', {}, 'typo')).status, 401);
+    } finally { child.kill('SIGTERM'); }
+    // a restart keeps every room
+    await new Promise((r) => setTimeout(r, 300));
+    assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'rooms')).sort(), ['hosted-one', 'newstreamer', 'old_streamer', 'second-room']);
+    assert.ok(!fs.existsSync(path.join(dir, 'state.json')), 'the old file was moved into the room');
   });
 
   console.log(`\n${pass} passed${process.exitCode ? ', some FAILED' : ''}`);

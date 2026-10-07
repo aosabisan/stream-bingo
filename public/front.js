@@ -102,7 +102,8 @@ let dabColor = DAB_COLORS[0], cur = null;
 try { const c = localStorage.getItem('bingoDabColor'); if (DAB_COLORS.includes(c)) dabColor = c; } catch {}
 const memMarks = new Map();   // used as-is when the browser blocks storage
 const cardOpts = () => (S && S.cards) || { clickToMark: false, autoMark: true };
-const marksKey = (m) => `bingoMarks:${m.gameNumber}:${m.platform}:${String(m.name).toLowerCase()}`;
+const ROOM = location.pathname.split('/')[1] || '';
+const marksKey = (m) => `bingoMarks:${ROOM}:${m.gameNumber}:${m.platform}:${String(m.name).toLowerCase()}`;
 function getMarks(m) {
   const k = marksKey(m);
   if (memMarks.has(k)) return memMarks.get(k);
@@ -117,7 +118,13 @@ function putMarks(m, o) {
   const k = marksKey(m); memMarks.set(k, o);
   try {
     // forget marks from older games so storage does not pile up
-    for (let n = localStorage.length - 1; n >= 0; n--) { const key = localStorage.key(n); if (key && key.startsWith('bingoMarks:') && +key.split(':')[1] < m.gameNumber) localStorage.removeItem(key); }
+    for (let n = localStorage.length - 1; n >= 0; n--) {
+      const key = localStorage.key(n);
+      if (!key || !key.startsWith('bingoMarks:')) continue;
+      const part = key.split(':');
+      // older games in this room, or keys in the format from before rooms
+      if (/^\d+$/.test(part[1]) || (part[1] === ROOM && +part[2] < m.gameNumber)) localStorage.removeItem(key);
+    }
     if (Object.keys(o).length) localStorage.setItem(k, JSON.stringify(o)); else localStorage.removeItem(k);
   } catch {}
 }
@@ -165,12 +172,12 @@ $('card').addEventListener('click', (e) => {
 });
 $('dabClear').onclick = () => { if (cur) { putMarks(cur.m, {}); drawCard(); } };
 
-async function loadState() { try { S = await (await fetch('/api/state')).json(); renderState(); } catch {} }
+async function loadState() { try { S = await (await fetch('api/state')).json(); renderState(); } catch {} }
 async function loadCard(prefer) {
   if (!name) return;
   try {
     const keep = prefer || (matches[pick] && matches[pick].platform);
-    matches = (await (await fetch('/api/card?name=' + encodeURIComponent(name))).json()).matches || [];
+    matches = (await (await fetch('api/card?name=' + encodeURIComponent(name))).json()).matches || [];
     const idx = matches.findIndex((m) => m.platform === keep); pick = idx >= 0 ? idx : 0;
     if (S) { renderCard(); renderLive(); }
   } catch {}

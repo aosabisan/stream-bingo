@@ -1,20 +1,25 @@
-// Game rules, storage and leaderboards.
+// Game rules, storage and leaderboards for one room. src/rooms.js makes one of these per room.
 const fs = require('fs');
 const path = require('path');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-const STATE_FILE = path.join(DATA_DIR, 'state.json');
+const BUNDLED_DIR = path.join(__dirname, '..', 'data');
 
 const LINES = [];
 for (let r = 0; r < 5; r++) LINES.push([0, 1, 2, 3, 4].map((c) => r * 5 + c));
 for (let c = 0; c < 5; c++) LINES.push([0, 1, 2, 3, 4].map((r) => r * 5 + c));
 LINES.push([0, 6, 12, 18, 24], [4, 8, 12, 16, 20]);
 
+// The starting word list for new rooms: DATA_DIR/words.default.txt if the host made one, else the bundled one.
 function defaultPhrases() {
-  try {
-    return fs.readFileSync(path.join(DATA_DIR, 'words.default.txt'), 'utf8')
-      .split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !s.startsWith('#'));
-  } catch { return []; }
+  for (const dir of [DATA_DIR, BUNDLED_DIR]) {
+    try {
+      const list = fs.readFileSync(path.join(dir, 'words.default.txt'), 'utf8')
+        .split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !s.startsWith('#'));
+      if (list.length) return list;
+    } catch {}
+  }
+  return [];
 }
 
 function defaults() {
@@ -52,6 +57,9 @@ function defaults() {
     week: { id: '' },
     lastWeek: null,
     feed: [],
+    // about the room itself (not shown to viewers): kind is 'dedicated' (made by the site owner, never expires,
+    // chat always connected) or 'community' (made from the home page)
+    room: { slug: '', kind: 'community', listed: true, created: 0, lastActive: 0, adminHash: '', adminSalt: '' },
   };
 }
 
@@ -62,28 +70,22 @@ function merge(base, extra) {
   return out;
 }
 
+const norm = (s) => String(s || '').trim().replace(/^@/, '').toLowerCase();
+
+function createRoom(dir) {
+const STATE_FILE = path.join(dir, 'state.json');
 let state = defaults();
 let saveTimer = null;
 
-// When DATA_DIR points somewhere else (a host's persistent disk), the settings shipped in ./data seed it on the first start.
-const BUNDLED_DIR = path.join(__dirname, '..', 'data');
-function seedFromBundled() {
-  if (process.env.BINGO_NO_SEED || path.resolve(DATA_DIR) === path.resolve(BUNDLED_DIR) || fs.existsSync(STATE_FILE)) return;
-  for (const f of ['state.json', 'words.default.txt', 'background.img']) {
-    try { if (fs.existsSync(path.join(BUNDLED_DIR, f))) fs.copyFileSync(path.join(BUNDLED_DIR, f), path.join(DATA_DIR, f)); } catch {}
-  }
-}
-
 function load() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  seedFromBundled();
+  fs.mkdirSync(dir, { recursive: true });
   try {
     state = merge(defaults(), JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')));
   } catch (e) {
     if (e.code !== 'ENOENT') {
       // a damaged file is kept aside instead of being overwritten
       try { fs.copyFileSync(STATE_FILE, STATE_FILE + '.broken-' + Date.now()); } catch {}
-      console.error('state.json could not be read, starting fresh (old file kept):', e.message);
+      console.error(`${STATE_FILE} could not be read, starting fresh (old file kept):`, e.message);
     }
     state = defaults();
   }
@@ -103,9 +105,10 @@ function saveNow() {
   fs.renameSync(tmp, STATE_FILE);
 }
 function save() { if (!saveTimer) saveTimer = setTimeout(saveNow, 400); }
+// something happened in the room (a game, a call, an admin visit): keeps chat awake and the room from expiring
+function touch() { const now = Date.now(); if (now - (state.room.lastActive || 0) > 60000) { state.room.lastActive = now; save(); } }
 
 const P = () => state.settings.points;
-const norm = (s) => String(s || '').trim().replace(/^@/, '').toLowerCase();
 const keyOf = (platform, userId, name) => `${platform}:${userId ? String(userId) : norm(name)}`;
 
 function feedAdd(type, text) {
@@ -190,6 +193,7 @@ function startGame() {
   const phrases = [...new Set(state.settings.phrases.map((s) => s.trim()).filter(Boolean))];
   if (phrases.length < 24) throw new Error(`Need at least 24 words (have ${phrases.length}).`);
   state.game = { active: true, number: g.number + 1, startedAt: Date.now(), phrases, called: [], players: {}, bingoOrder: [], blackoutOrder: [] };
+  touch();
   feedAdd('start', `Game #${state.game.number} is open. Type !enter in chat to get a card.`);
   save();
   return state.game;
@@ -223,6 +227,7 @@ function enter(platform, userId, name, arg) {
   }
   addPoints(a, -wager + P().entryBonus);
   g.players[key] = { name, platform, card: newCard(g.phrases.length), wager, ignored: state.settings.countEarlyCalls ? [] : [...g.called], bingo: false, blackout: false };
+  touch();
   feedAdd('join', `${name} joined${wager ? ` with a ${wager} ${P().currency} wager` : ''}`);
   const wins = checkWinners(g);
   save();
@@ -263,6 +268,7 @@ function mark(input, on, who = 'mod') {
   }
   if (!changed.length) throw new Error(on ? 'Already called.' : 'Not called yet.');
   for (const n of changed) feedAdd(on ? 'call' : 'uncall', `${on ? 'Called' : 'Un-called'} #${n} ${g.phrases[n - 1]} (by ${who})`);
+  touch();
   const wins = on ? checkWinners(g) : [];
   save();
   return { changed, wins };
@@ -380,7 +386,10 @@ function adminState() {
   };
 }
 
-module.exports = {
-  load, saveNow, save, get state() { return state; }, DATA_DIR,
-  startGame, endGame, enter, mark, givePoints, handleChat, lookup, publicState, adminState, weekId, tickWeek, norm,
+return {
+  dir, load, saveNow, save, touch, get state() { return state; }, get slug() { return state.room.slug; },
+  startGame, endGame, enter, mark, givePoints, handleChat, lookup, publicState, adminState, weekId, tickWeek,
 };
+}
+
+module.exports = { createRoom, norm, defaults, DATA_DIR };
