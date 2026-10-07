@@ -582,6 +582,61 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
     assert.ok(!fs.existsSync(path.join(dir, 'state.json')), 'the old file was moved into the room');
   });
 
+  await t('deleted rooms are erased for good after DELETED_KEEP_DAYS (30)', () => {
+    fs.mkdirSync(rooms.TRASH_DIR, { recursive: true });
+    const old = path.join(rooms.TRASH_DIR, 'old-room-2020-01-01-1'), fresh = path.join(rooms.TRASH_DIR, 'new-room-x');
+    fs.mkdirSync(old, { recursive: true }); fs.mkdirSync(fresh, { recursive: true });
+    const long = new Date(Date.now() - 31 * 86400000); fs.utimesSync(old, long, long);
+    rooms.pruneTrash(Date.now());
+    assert.ok(!fs.existsSync(old)); assert.ok(fs.existsSync(fresh));
+  });
+
+  await t('security: password guessing cannot stall the server, cross-room guessing is capped, CSRF/framing/upload limits', async () => {
+    const { spawn } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bingo-sec-'));
+    const port = 3914, b4 = 'http://localhost:' + port;
+    const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], {
+      env: { ...process.env, DATA_DIR: dir, PORT: String(port), SITE_ADMIN_PASSWORD: 'owner-pw', ADMIN_PASSWORD: '', TRUST_PROXY_HOPS: '1', MAX_AWAKE_ROOMS: '2', MAX_BACKGROUND_MB: '1' }, stdio: 'ignore',
+    });
+    const R = async (u, opt = {}) => { const r = await fetch(b4 + u, opt); return { status: r.status, headers: r.headers, body: await r.json().catch(() => null) }; };
+    const post = (u, body, hdr = {}) => R(u, { method: 'POST', headers: { 'Content-Type': 'application/json', ...hdr }, body: JSON.stringify(body || {}) });
+    try {
+      for (let i = 0; i < 50; i++) { try { if ((await fetch(b4 + '/healthz')).ok) break; } catch {} await new Promise((r) => setTimeout(r, 100)); }
+      const made = [];
+      for (let i = 0; i < 12; i++) {
+        const r = await post('/api/rooms', { name: 'sec-room-' + i }, { 'x-forwarded-for': `40.0.${i >> 1}.1` });   // 3 an hour per address: spread out
+        assert.strictEqual(r.status, 200, 'make room ' + i); made.push(r.body);
+      }
+      // CSRF: a cross-site form can only send text/plain or form data; those are refused
+      assert.strictEqual((await R('/api/rooms', { method: 'POST', headers: { 'Content-Type': 'text/plain', 'x-forwarded-for': '41.0.0.1' }, body: JSON.stringify({ name: 'csrf-room' }) })).status, 415);
+      // 120 wrong guesses at 12 rooms from 120 addresses at once: each costs a hash, but the server keeps answering quickly
+      const flood = Array.from({ length: 120 }, (_, i) => post(`/sec-room-${i % 12}/api/admin/status`, {}, { 'x-admin-password': 'guess-' + i, 'x-forwarded-for': `50.1.${i}.1` }));
+      const t0 = Date.now(); const h = await fetch(b4 + '/healthz'); const lag = Date.now() - t0;
+      assert.ok(h.ok && lag < 250, `health check took ${lag} ms during the flood`);
+      const st = await Promise.all(flood); assert.ok(st.every((r) => r.status === 401 || r.status === 429));
+      // one address guessing across many rooms: after 20 wrong it gets 429 without any hashing, even at a fresh room
+      let last;
+      for (let i = 0; i < 21; i++) last = await post(`/sec-room-${i % 12}/api/admin/status`, {}, { 'x-admin-password': 'nope' + i, 'x-forwarded-for': '60.0.0.1' });
+      assert.strictEqual(last.status, 429);
+      assert.strictEqual((await post('/sec-room-11/api/mod/status', {}, { 'x-mod-password': 'nope', 'x-forwarded-for': '60.0.0.1' })).status, 429);
+      // ...while the real owner elsewhere still gets in, and the site owner always does
+      assert.strictEqual((await post('/sec-room-3/api/admin/status', {}, { 'x-admin-password': made[3].password, 'x-forwarded-for': '61.0.0.1' })).status, 200);
+      assert.strictEqual((await post('/sec-room-4/api/admin/status', {}, { 'x-admin-password': 'owner-pw', 'x-forwarded-for': '60.0.0.1' })).status, 200);
+      // framing: password pages refuse to be framed; the viewer page and home page may be
+      const adminPage = await fetch(b4 + '/sec-room-1/admin'), viewer = await fetch(b4 + '/sec-room-1/'), siteP = await fetch(b4 + '/site-admin');
+      for (const r of [adminPage, siteP]) { assert.strictEqual(r.headers.get('x-frame-options'), 'DENY'); assert.match(r.headers.get('content-security-policy'), /frame-ancestors 'none'/); }
+      assert.strictEqual(viewer.headers.get('x-frame-options'), null); assert.match(viewer.headers.get('content-security-policy'), /connect-src 'self'/);
+      // background uploads are capped (MAX_BACKGROUND_MB=1 here)
+      const big = Buffer.alloc(1.5 * 1024 * 1024); big.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const up = await fetch(b4 + '/sec-room-3/api/admin/background', { method: 'POST', headers: { 'x-admin-password': made[3].password, 'x-forwarded-for': '61.0.0.1' }, body: big }).catch(() => ({ status: 413 }));
+      assert.strictEqual(up.status, 413);
+      // at most MAX_AWAKE_ROOMS (2 here) community rooms keep chat connected; the most recently used win
+      await post('/api/site/update', { name: 'sec-room-0', listed: true }, { 'x-admin-password': 'owner-pw', 'x-forwarded-for': '62.0.0.1' });   // runs a tick
+      const list = (await post('/api/site/status', {}, { 'x-admin-password': 'owner-pw', 'x-forwarded-for': '62.0.0.1' })).body.rooms;
+      assert.strictEqual(list.filter((r) => r.chat === 'on').length, 2, list.map((r) => r.name + ':' + r.chat).join(' '));
+    } finally { child.kill('SIGTERM'); }
+  });
+
   console.log(`\n${pass} passed${process.exitCode ? ', some FAILED' : ''}`);
   game.saveNow(); process.exit(process.exitCode || 0);
 })();

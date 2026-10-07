@@ -13,6 +13,8 @@ const SITE_FILE = path.join(DATA_DIR, 'site.json');
 const num = (v, d) => { const n = Number(v); return v !== undefined && v !== '' && Number.isFinite(n) && n >= 0 ? n : d; };
 const CHAT_IDLE_MS = num(process.env.CHAT_IDLE_HOURS, 6) * 3600000;   // community rooms disconnect chat after this long unused
 const EXPIRE_MS = num(process.env.ROOM_EXPIRE_DAYS, 90) * 86400000;   // community rooms are removed after this long unused (0 = never)
+const MAX_AWAKE = num(process.env.MAX_AWAKE_ROOMS, 100);                // most community rooms with chat connected at once
+const TRASH_KEEP_MS = num(process.env.DELETED_KEEP_DAYS, 30) * 86400000; // deleted rooms are erased for good after this
 
 // Room names: 3-30 characters, lower case letters, numbers, - and _ (so Twitch and Kick names fit). Words used by the site are kept back.
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{2,29}$/;
@@ -39,14 +41,25 @@ function setPassword(game, pw) {
   game.state.room.adminHash = crypto.scryptSync(String(pw), salt, 32).toString('base64url');
   game.saveNow();
 }
-function passwordOk(game, given) {
+const cacheKey = (r, given) => crypto.createHash('sha256').update(r.adminHash + '\0' + given).digest('base64url');
+// cheap: was this exact password accepted for this room recently? (no hashing)
+function passwordCached(game, given) {
   const r = game.state.room;
-  if (!given || !r.adminHash) return false;
-  const key = crypto.createHash('sha256').update(r.adminHash + '\0' + given).digest('base64url');
-  if (okCache.has(key)) return true;
-  const ok = crypto.timingSafeEqual(crypto.scryptSync(String(given), r.adminSalt, 32), Buffer.from(r.adminHash, 'base64url'));
-  if (ok) { okCache.set(key, true); if (okCache.size > 2000) okCache.delete(okCache.keys().next().value); }
-  return ok;
+  return !!given && !!r.adminHash && okCache.has(cacheKey(r, given));
+}
+// the real check. scrypt costs ~50 ms of CPU, so it runs off the main thread and the server keeps answering meanwhile;
+// the server also refuses to start more checks for an address (or the whole site) that keeps getting it wrong.
+function passwordCheck(game, given) {
+  const r = game.state.room;
+  if (!given || !r.adminHash) return Promise.resolve(false);
+  if (passwordCached(game, given)) return Promise.resolve(true);
+  const hashAtStart = r.adminHash;
+  return new Promise((resolve) => crypto.scrypt(String(given), r.adminSalt, 32, (err, key) => {
+    if (err || hashAtStart !== r.adminHash) return resolve(false);
+    const ok = crypto.timingSafeEqual(key, Buffer.from(hashAtStart, 'base64url'));
+    if (ok) { okCache.set(cacheKey(r, given), true); if (okCache.size > 2000) okCache.delete(okCache.keys().next().value); }
+    resolve(ok);
+  }));
 }
 const newPassword = () => crypto.randomBytes(9).toString('base64url');
 
@@ -117,7 +130,9 @@ function remove(name) {
   try { e.game.saveNow(); } catch {}
   rooms.delete(name);
   fs.mkdirSync(TRASH_DIR, { recursive: true });
-  fs.renameSync(path.join(ROOMS_DIR, name), path.join(TRASH_DIR, `${name}-${new Date().toISOString().slice(0, 10)}-${Date.now() % 100000}`));
+  const dest = path.join(TRASH_DIR, `${name}-${new Date().toISOString().slice(0, 10)}-${Date.now() % 100000}`);
+  fs.renameSync(path.join(ROOMS_DIR, name), dest);
+  try { const t = new Date(); fs.utimesSync(dest, t, t); } catch {}
   if (site.legacyRoom === name) { site.legacyRoom = ''; saveSite(); }
 }
 
@@ -131,7 +146,28 @@ function wake(e) { e.game.touch(); if (!e.chat.running) e.chat.startAll(); }
 // channels changed: reconnect now if the room is awake
 function channelsChanged(e) { if (awake(e)) e.chat.startAll(); else e.chat.stopAll(); }
 
+// Which community rooms may have chat connected: the ones that are awake, busiest first (running game, then most recently used),
+// up to MAX_AWAKE. Featured rooms are always connected and do not count.
+function allowedAwake(now) {
+  const want = [...rooms].filter(([, e]) => !isDedicated(e) && awake(e, now));
+  want.sort(([, a], [, b]) => (b.game.state.game.active - a.game.state.game.active) || ((b.game.state.room.lastActive || 0) - (a.game.state.room.lastActive || 0)));
+  return new Set(want.slice(0, MAX_AWAKE).map(([n]) => n));
+}
+
+function pruneTrash(now) {
+  if (!TRASH_KEEP_MS) return;
+  let list = [];
+  try { list = fs.readdirSync(TRASH_DIR); } catch { return; }
+  for (const d of list) {
+    const full = path.join(TRASH_DIR, d);
+    try { if (now - fs.statSync(full).mtimeMs > TRASH_KEEP_MS) fs.rmSync(full, { recursive: true, force: true }); } catch {}
+  }
+}
+
+let lastPrune = 0;
 function tick(now = Date.now()) {
+  if (now - lastPrune > 3600000) { lastPrune = now; pruneTrash(now); }
+  const allowed = allowedAwake(now);
   for (const [name, e] of [...rooms]) {
     try {
       e.game.tickWeek();
@@ -140,7 +176,7 @@ function tick(now = Date.now()) {
         console.log(`Room ${name} was unused for ${Math.round(EXPIRE_MS / 86400000)} days and was removed.`);
         remove(name); continue;
       }
-      const on = awake(e, now);
+      const on = isDedicated(e) || allowed.has(name);
       if (on && !e.chat.running) e.chat.startAll();
       if (!on && e.chat.running) e.chat.stopAll();
     } catch (err) { console.error(`Room ${name}:`, err.message); }
@@ -162,6 +198,6 @@ function saveAll() { for (const e of rooms.values()) { try { e.game.saveNow(); }
 
 module.exports = {
   init, create, remove, get: (name) => rooms.get(cleanName(name)), list, summary, tick, wake, awake, channelsChanged, saveAll,
-  checkName, passwordOk, setPassword, newPassword, saveSite, isDedicated,
+  checkName, passwordCached, passwordCheck, setPassword, pruneTrash, MAX_AWAKE, TRASH_DIR, newPassword, saveSite, isDedicated,
   get site() { return site; }, get count() { return rooms.size; }, ROOMS_DIR, CHAT_IDLE_MS, EXPIRE_MS,
 };

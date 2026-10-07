@@ -33,10 +33,7 @@ rooms.init({ legacyPassword: OLD_PW });
 const hash = (s) => crypto.createHash('sha256').update(String(s)).digest();
 const same = (a, b) => crypto.timingSafeEqual(hash(a), hash(b));
 const siteOk = (given) => !!given && same(given, SITE_PW);
-// a room's admin page: that room's password, or the site owner's
-const roomAdminOk = (e, given) => siteOk(given) || rooms.passwordOk(e.game, given);
-// a room's mod page: the room's mod password, or anything that opens its admin page
-const roomModOk = (e, given) => !!given && (same(given, e.game.state.settings.modPassword) || roomAdminOk(e, given));
+const MAX_BG_BYTES = Math.max(1, Number(process.env.MAX_BACKGROUND_MB) || 4) * 1024 * 1024;
 
 // ---- client address ----
 // By default only the TCP socket address is used: X-Forwarded-For is written by the caller and can say anything.
@@ -75,13 +72,36 @@ function limited(ip, name, max, windowMs) {
 // Keys here are fixed names, at most one per counter per room.
 const globalBuckets = new Map();
 const limitedGlobal = (name, max, windowMs) => hit(globalBuckets, name, max, windowMs);
+// how many hits a counter has in the window, without adding one
+const count = (map, k, windowMs) => { const now = Date.now(); return (map.get(k) || []).filter((t) => now - t < windowMs).length; };
 
 // Wrong passwords are limited per address (8) AND in total (60) per 10 minutes, counted separately for each room
 // and page. A correct password is always checked first, so the real admin is never locked out by someone guessing.
 function tooManyBad(ip, name) {
   const perAddr = limited(ip, name, 8, 10 * 60000);
   const total = limitedGlobal(name, 60, 10 * 60000);
-  return perAddr || total;
+  // also counted across all rooms: one address guessing at many rooms, or many addresses at once
+  const anyAddr = limited(ip, 'badpw-any', BAD_ANY_ADDR, 10 * 60000);
+  const anyTotal = limitedGlobal('badpw-any', BAD_ANY_TOTAL, 10 * 60000);
+  return perAddr || total || anyAddr || anyTotal;
+}
+// Checking a room password costs real CPU (scrypt), so once an address, or the whole site, has made this many wrong
+// guesses in 10 minutes, new checks are refused before any hashing. Passwords that worked recently (and the site
+// owner's) are still recognised, because those checks are cheap.
+const BAD_ANY_ADDR = 20, BAD_ANY_TOTAL = 300;
+const hashingPaused = (ip) => count(buckets, 'badpw-any|' + ip, 10 * 60000) >= BAD_ANY_ADDR || count(globalBuckets, 'badpw-any', 10 * 60000) >= BAD_ANY_TOTAL;
+
+// a room's admin page: that room's password, or the site owner's. Returns 'ok', 'wrong' or 'paused'.
+async function roomAdminAuth(e, given, ip) {
+  if (!given) return 'wrong';
+  if (siteOk(given) || rooms.passwordCached(e.game, given)) return 'ok';
+  if (hashingPaused(ip)) return 'paused';
+  return (await rooms.passwordCheck(e.game, given)) ? 'ok' : 'wrong';
+}
+// a room's mod page: the room's mod password, or anything that opens its admin page
+async function roomModAuth(e, given, ip) {
+  if (given && same(given, e.game.state.settings.modPassword)) return 'ok';
+  return roomAdminAuth(e, given, ip);
 }
 
 function readBody(req, limit) {
@@ -106,7 +126,13 @@ function sendFile(res, file, extra = {}) {
     res.end(buf);
   });
 }
-const page = (res, name) => sendFile(res, path.join(PUB, name), { 'Cache-Control': 'no-cache', 'Referrer-Policy': 'same-origin' });
+// Content-Security-Policy: pages may only load from and talk to this site. Pages with passwords may not be shown inside
+// another site's frame (clickjacking); viewer pages may (some streamers embed them).
+const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'";
+const page = (res, name, { framable = false } = {}) => sendFile(res, path.join(PUB, name), {
+  'Cache-Control': 'no-cache', 'Referrer-Policy': 'same-origin',
+  'Content-Security-Policy': CSP + (framable ? '' : "; frame-ancestors 'none'"), ...(framable ? {} : { 'X-Frame-Options': 'DENY' }),
+});
 const redirect = (res, to, code = 302) => { res.writeHead(code, { Location: to, 'Cache-Control': 'no-store' }); res.end(); };
 
 function sniff(buf) {
@@ -241,6 +267,8 @@ function directory() {
 }
 async function createRoom(req, res, ip) {
   if (rooms.site.openRooms === false) return send(res, 403, { error: 'Making new rooms is switched off right now.' });
+  // JSON only: a plain form on another website cannot send that without the browser asking this site first (and it says no)
+  if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Send JSON.' });
   const b = await readJson(req);
   let name;
   try { name = rooms.checkName(b.name); } catch (e) { return send(res, 400, { error: e.message }); }
@@ -260,10 +288,15 @@ const bgFile = (e) => path.join(e.game.dir, 'background.img');
 // ---- one room: /<room>/... ----
 async function handleRoom(req, res, e, rest, url, ip) {
   const name = e.game.slug, game = e.game;
-  if (rest === '/') return page(res, 'index.html');
+  if (rest === '/') return page(res, 'index.html', { framable: true });
   if (rest === '/admin') return page(res, 'admin.html');
   if (rest === '/mod') return page(res, 'mod.html');
-  if (rest === '/api/state') return send(res, 200, { ...game.publicState(), room: name, hasBackground: fs.existsSync(bgFile(e)) });
+  if (rest === '/api/state') {
+    // every viewer's page asks for this every 5 seconds, so the answer is reused for a second
+    const now = Date.now();
+    if (!e.stateCache || now - e.stateCache.t > 1000) e.stateCache = { t: now, body: JSON.stringify({ ...game.publicState(), room: name, hasBackground: fs.existsSync(bgFile(e)) }) };
+    return send(res, 200, e.stateCache.body, { 'Content-Type': 'application/json' });
+  }
   if (rest === '/api/card') {
     if (limited(ip, 'card', 60, 60000)) return send(res, 429, { error: 'Slow down a little.' });
     return send(res, 200, { matches: game.lookup(url.searchParams.get('name') || '') });
@@ -275,15 +308,18 @@ async function handleRoom(req, res, e, rest, url, ip) {
 
   if (rest.startsWith('/api/admin/')) {
     if (limited(ip, 'admin', 120, 60000)) return send(res, 429, { error: 'Too many requests.' });
-    if (!roomAdminOk(e, req.headers['x-admin-password'] || '')) {
+    const auth = await roomAdminAuth(e, req.headers['x-admin-password'] || '', ip);
+    if (auth === 'paused') return send(res, 429, { error: 'Too many wrong passwords. Try again in 10 minutes.' });
+    if (auth !== 'ok') {
       if (tooManyBad(ip, 'badpw:' + name)) return send(res, 429, { error: 'Too many wrong passwords. Try again in 10 minutes.' });
       return send(res, 401, { error: 'Wrong password.' });
     }
+    e.stateCache = null;
     const action = rest.slice('/api/admin/'.length);
     try {
       if (action === 'background') {
         if (req.method === 'DELETE') { try { fs.unlinkSync(bgFile(e)); } catch {} game.state.settings.backgroundVersion++; game.save(); return send(res, 200, {}); }
-        const buf = await readBody(req, 12 * 1024 * 1024);
+        const buf = await readBody(req, MAX_BG_BYTES);
         const type = sniff(buf);
         if (!type) throw new Error('Please upload a PNG, JPG or WEBP image.');
         fs.writeFileSync(bgFile(e), buf); game.state.settings.backgroundType = type; game.state.settings.backgroundVersion++; game.save();
@@ -298,10 +334,13 @@ async function handleRoom(req, res, e, rest, url, ip) {
   // ---- mod page: may only look at the word list and call or un-call words ----
   if (rest.startsWith('/api/mod/')) {
     if (limited(ip, 'mod', 120, 60000)) return send(res, 429, { error: 'Too many requests.' });
-    if (!roomModOk(e, req.headers['x-mod-password'] || '')) {
+    const auth = await roomModAuth(e, req.headers['x-mod-password'] || '', ip);
+    if (auth === 'paused') return send(res, 429, { error: 'Too many wrong passwords. Try again in 10 minutes.' });
+    if (auth !== 'ok') {
       if (tooManyBad(ip, 'badmodpw:' + name)) return send(res, 429, { error: 'Too many wrong passwords. Try again in 10 minutes.' });
       return send(res, 401, { error: 'Wrong password.' });
     }
+    e.stateCache = null;
     const action = rest.slice('/api/mod/'.length);
     try {
       if (action === 'status') { const g = game.adminState().game; return send(res, 200, { ok: true, title: game.state.settings.title, game: g }); }
@@ -355,7 +394,7 @@ async function handle(req, res) {
   }
 
   if (req.method !== 'GET' && req.method !== 'HEAD' && !p.includes('/api/')) return send(res, 405, 'Method not allowed');
-  if (p === '/') return page(res, 'home.html');
+  if (p === '/') return page(res, 'home.html', { framable: true });
   if (p === '/site-admin') return page(res, 'site-admin.html');
 
   const m = ROOM_PATH.exec(p);
@@ -376,6 +415,8 @@ async function handle(req, res) {
 }
 
 const server = http.createServer((req, res) => handle(req, res).catch((e) => { console.error(e); try { send(res, 500, { error: 'Server error' }); } catch {} }));
+// slow or stuck clients are cut off instead of holding a connection open
+server.headersTimeout = 20000; server.requestTimeout = 60000; server.keepAliveTimeout = 10000;
 server.listen(PORT, () => {
   console.log(`Stream Bingo running on http://localhost:${PORT}  (${rooms.count} rooms, site admin: /site-admin)`);
   rooms.tick();
