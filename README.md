@@ -92,6 +92,10 @@ Settings that matter on a server:
 - `MAX_ROOMS` (default 300): most community rooms at once. Also changeable on `/site-admin`.
 - `CHAT_IDLE_HOURS` (default 6) and `ROOM_EXPIRE_DAYS` (default 90): see Rooms above.
 - `LEGACY_ROOM`: the room name for the 1.x game when upgrading, if you do not want it named after its channel.
+- `MAX_AWAKE_ROOMS` (default 100): most community rooms with chat connected at the same time. When more want to be on, the ones with a
+  running game and the most recent use win; the rest sleep until there is room. Featured rooms are always connected and do not count.
+- `MAX_BACKGROUND_MB` (default 4): largest card background a room can upload.
+- `DELETED_KEEP_DAYS` (default 30): deleted and expired rooms stay in `DATA_DIR/deleted-rooms` this long, then are erased.
 - `PORT`: set it if your host tells you which port to use.
 - `TZ`: the weekly leaderboard resets on the server's clock. Servers usually run on UTC, so set `TZ` to your own time zone.
 - `TRUST_PROXY_HOPS`: **set this when the site sits behind a reverse proxy** (Render, Railway, Fly.io, Caddy, nginx, a Cloudflare
@@ -100,8 +104,11 @@ Settings that matter on a server:
   `X-Forwarded-For`, because a visitor can type anything into that header. Behind a proxy that would make every visitor look like
   the proxy, so all viewers would share one rate limit (card lookups are 60 a minute) and the page could start answering
   "Slow down" during a busy stream. Leave it unset when people connect to the server directly.
-- Wrong passwords are limited to 8 per address and 60 in total per 10 minutes, counted separately for each room's admin and mod
-  pages and for `/site-admin`. A correct password always works, so guessing cannot lock you out.
+- Wrong passwords are limited to 8 per address and 60 in total per 10 minutes for each room's admin and mod pages and for
+  `/site-admin`, and across all rooms to 20 per address and 300 in total. Room passwords are stored as scrypt hashes and checked
+  off the main thread. Once the cross-room limit is reached, new password checks wait out the 10 minutes, but a password that
+  worked recently, and the site owner's password, still work straight away.
+- Pages send a Content-Security-Policy; admin, mod and site admin pages cannot be put inside another site's frame.
 - `/healthz` answers 200 with the number of rooms, live games and connected chats. Use it as the health check path on Render,
   Fly.io or an uptime monitor.
 - Docker on a host disk: if the mounted `/data` folder is owned by root the server cannot save. Either let the host create the

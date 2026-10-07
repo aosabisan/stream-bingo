@@ -6,6 +6,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { DATA_DIR } = require('./src/game');
 const rooms = require('./src/rooms');
 
@@ -118,6 +119,18 @@ function send(res, code, body, headers = {}) {
   const isObj = body !== null && typeof body === 'object' && !Buffer.isBuffer(body);
   res.writeHead(code, { 'Content-Type': isObj ? 'application/json' : 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers });
   res.end(isObj ? JSON.stringify(body) : body);
+}
+// For answers that viewers' pages ask for every few seconds: an ETag so an unchanged answer costs a tiny
+// "304 Not Modified" (browsers send If-None-Match by themselves), and gzip when the browser accepts it.
+function packed(json) {
+  const raw = Buffer.from(json);
+  return { raw, gz: raw.length > 1024 ? zlib.gzipSync(raw) : null, etag: '"' + crypto.createHash('sha1').update(raw).digest('base64url') + '"' };
+}
+function sendPacked(req, res, p) {
+  const h = { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', 'X-Content-Type-Options': 'nosniff', ETag: p.etag, Vary: 'Accept-Encoding' };
+  if (req.headers['if-none-match'] === p.etag) { res.writeHead(304, h); return res.end(); }
+  if (p.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) { res.writeHead(200, { ...h, 'Content-Encoding': 'gzip' }); return res.end(p.gz); }
+  res.writeHead(200, h); res.end(p.raw);
 }
 function sendFile(res, file, extra = {}) {
   fs.readFile(file, (err, buf) => {
@@ -294,12 +307,12 @@ async function handleRoom(req, res, e, rest, url, ip) {
   if (rest === '/api/state') {
     // every viewer's page asks for this every 5 seconds, so the answer is reused for a second
     const now = Date.now();
-    if (!e.stateCache || now - e.stateCache.t > 1000) e.stateCache = { t: now, body: JSON.stringify({ ...game.publicState(), room: name, hasBackground: fs.existsSync(bgFile(e)) }) };
-    return send(res, 200, e.stateCache.body, { 'Content-Type': 'application/json' });
+    if (!e.stateCache || now - e.stateCache.t > 1000) e.stateCache = { t: now, ...packed(JSON.stringify({ ...game.publicState(), room: name, hasBackground: fs.existsSync(bgFile(e)) })) };
+    return sendPacked(req, res, e.stateCache);
   }
   if (rest === '/api/card') {
     if (limited(ip, 'card', 60, 60000)) return send(res, 429, { error: 'Slow down a little.' });
-    return send(res, 200, { matches: game.lookup(url.searchParams.get('name') || '') });
+    return sendPacked(req, res, packed(JSON.stringify({ matches: game.lookup(url.searchParams.get('name') || '') })));
   }
   if (rest === '/background') {
     if (!fs.existsSync(bgFile(e))) return send(res, 404, 'No background');

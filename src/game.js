@@ -164,9 +164,10 @@ const countMarked = (g, p) => p.card.filter((c) => isMarked(g, p, c)).length;
 const completedLines = (g, p) => LINES.filter((l) => l.every((i) => isMarked(g, p, p.card[i]))).length;
 const neededForLine = (g, p) => Math.min(...LINES.map((l) => l.filter((i) => !isMarked(g, p, p.card[i])).length));
 
-function checkWinners(g) {
+// only: check just these player keys (a new card), instead of every card (after a word is called)
+function checkWinners(g, only) {
   const wins = [];
-  for (const [key, p] of Object.entries(g.players)) {
+  for (const [key, p] of only ? only.map((k) => [k, g.players[k]]) : Object.entries(g.players)) {
     const a = getAccount(key, p.name, p.platform);
     if (!p.bingo && completedLines(g, p) > 0) {
       p.bingo = true; g.bingoOrder.push(key);
@@ -229,7 +230,7 @@ function enter(platform, userId, name, arg) {
   g.players[key] = { name, platform, card: newCard(g.phrases.length), wager, ignored: state.settings.countEarlyCalls ? [] : [...g.called], bingo: false, blackout: false };
   touch();
   feedAdd('join', `${name} joined${wager ? ` with a ${wager} ${P().currency} wager` : ''}`);
-  const wins = checkWinners(g);
+  const wins = checkWinners(g, [key]);   // nobody else's card changed
   save();
   return { key, wins };
 }
