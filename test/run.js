@@ -705,6 +705,31 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
     rooms.remove('count-room');
   });
 
+  await t('viewer marks: someone who marks more than one player\'s card counts for nothing', () => {
+    const g = rooms.create('multi-room').entry.game;
+    g.state.settings.viewerMarking = true;
+    g.startGame();
+    for (let i = 0; i < 3; i++) g.enter('kick', String(500 + i), 'Watcher' + i, '');
+    const P = (i) => g.state.game.players['kick:' + (500 + i)];
+    const free = (i) => P(i).card.filter((c) => c && !g.state.game.called.includes(c));
+    // an honest viewer marks only their own card: counted
+    g.viewMark('Watcher0', 'kick', free(0)[0], true, false, ['ip:1.1.1.1', 't:honest-viewer-0']);
+    assert.strictEqual(g.viewCounts()[free(0)[0]], 1);
+    // another viewer marks their own card, then someone else's: none of their marks count, on either card
+    g.viewMark('Watcher1', 'kick', free(1)[0], true, false, ['ip:2.2.2.2', 't:snooper-viewer']);
+    assert.strictEqual(g.viewCounts()[free(1)[0]] >= 1, true, 'counted while it is only one card');
+    g.viewMark('Watcher2', 'kick', free(2)[1], true, false, ['ip:9.9.9.9', 't:snooper-viewer']);   // same browser, other address
+    const c = g.viewCounts();
+    assert.strictEqual(c[free(2)[1]] || 0, (free(0)[0] === free(2)[1] ? 1 : 0), 'the second card is not counted');
+    assert.ok(!(free(1)[0] in c) || free(1)[0] === free(0)[0], 'the first card is no longer counted either');
+    assert.ok(g.multiMarked('kick:501') && g.multiMarked('kick:502') && !g.multiMarked('kick:500'));
+    // the same address on two cards counts as one person too
+    g.viewMark('Watcher0', 'kick', free(0)[1], true, false, ['ip:2.2.2.2', 't:another-browser']);
+    assert.ok(g.multiMarked('kick:500'), 'shared address');
+    assert.deepStrictEqual(g.viewCounts(), {});
+    rooms.remove('multi-room');
+  });
+
   await t('spam guard: lots of chat with no game activity pauses a community room; the admin page lifts it', () => {
     const e = rooms.create('noisy-room').entry;
     const now = Date.now();

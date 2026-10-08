@@ -119,15 +119,18 @@ function putMarks(m, set) {
     for (let n = localStorage.length - 1; n >= 0; n--) {
       const key = localStorage.key(n);
       if (!key) continue;
-      if (key.startsWith('bingoMarks:') || key === 'bingoDabColor') { localStorage.removeItem(key); continue; }
+      if (key.startsWith('bingoMarks:') || key === 'bingoDabColor') { localStorage.removeItem(key); continue; }   // older formats
       const part = key.split(':');
       if (part[0] === 'bingoMarks2' && part[1] === ROOM && +part[2] < m.gameNumber) localStorage.removeItem(key);
     }
     if (set.size) localStorage.setItem(k, JSON.stringify([...set])); else localStorage.removeItem(k);
   } catch {}
 }
+// a random id for this browser, so the server can tell one viewer marking several people's cards (those marks are not counted)
+let VIEWER = '';
+try { VIEWER = localStorage.getItem('bingoViewer') || ''; if (!/^[A-Za-z0-9_-]{8,40}$/.test(VIEWER)) { VIEWER = Array.from(crypto.getRandomValues(new Uint8Array(12)), (x) => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_'[x & 63]).join(''); localStorage.setItem('bingoViewer', VIEWER); } } catch {}
 function tellServer(m, body) {
-  fetch('api/viewmark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: m.name, platform: m.platform, ...body }) }).catch(() => {});
+  fetch('api/viewmark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: m.name, platform: m.platform, viewer: VIEWER, ...body }) }).catch(() => {});
 }
 
 function drawCard() {

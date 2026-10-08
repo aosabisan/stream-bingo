@@ -363,7 +363,9 @@ async function handleRoom(req, res, e, rest, url, ip) {
     if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Send JSON.' });
     if (limited(ip, 'viewmark', 120, 60000)) return send(res, 429, { error: 'Slow down a little.' });
     const b = await readJson(req);
-    try { return send(res, 200, { ok: true, ...game.viewMark(str(b.name, 40), str(b.platform, 10), b.n, !!b.on, !!b.clear) }); }
+    // who is marking: their address and the random id their browser keeps
+    const markers = ['ip:' + ip, /^[A-Za-z0-9_-]{8,40}$/.test(String(b.viewer || '')) ? 't:' + b.viewer : ''];
+    try { const r = game.viewMark(str(b.name, 40), str(b.platform, 10), b.n, !!b.on, !!b.clear, markers); return send(res, 200, { ok: true, marks: r.marks }); }
     catch (err) { return send(res, 400, { error: err.message }); }
   }
   if (rest === '/background') {

@@ -54,7 +54,7 @@ function defaults() {
         accent: '#ff4d6d', cellFill: 'rgba(0,0,0,0.55)', cellBorder: 'rgba(255,255,255,0.6)', textColor: '#ffffff',
       },
     },
-    game: { active: false, number: 0, startedAt: 0, phrases: [], called: [], players: {}, bingoOrder: [], blackoutOrder: [], viewMarks: {}, lastActivity: 0 },
+    game: { active: false, number: 0, startedAt: 0, phrases: [], called: [], players: {}, bingoOrder: [], blackoutOrder: [], viewMarks: {}, markerCards: {}, cardMarkers: {}, lastActivity: 0 },
     templates: [],   // this room's own saved word lists: [{ id, name, phrases }]
     accounts: {},
     week: { id: '' },
@@ -94,6 +94,8 @@ function load() {
   }
   delete state.events; delete state.eventSeq;   // left over from older versions
   if (!state.game.viewMarks) state.game.viewMarks = {};
+  if (!state.game.markerCards) state.game.markerCards = {};
+  if (!state.game.cardMarkers) state.game.cardMarkers = {};
   if (state.game.active && !state.game.lastActivity) state.game.lastActivity = Date.now();   // games from before idle closing start their clock now
   if (!state.settings.modPassword) {
     state.settings.modPassword = require('crypto').randomBytes(6).toString('base64url');
@@ -198,7 +200,7 @@ function startGame() {
   if (g.active) throw new Error(`Game #${g.number} is already running.`);
   const phrases = [...new Set(state.settings.phrases.map((s) => s.trim()).filter(Boolean))];
   if (phrases.length < 24) throw new Error(`Need at least 24 words (have ${phrases.length}).`);
-  state.game = { active: true, number: g.number + 1, startedAt: Date.now(), lastActivity: Date.now(), phrases, called: [], players: {}, bingoOrder: [], blackoutOrder: [], viewMarks: {} };
+  state.game = { active: true, number: g.number + 1, startedAt: Date.now(), lastActivity: Date.now(), phrases, called: [], players: {}, bingoOrder: [], blackoutOrder: [], viewMarks: {}, markerCards: {}, cardMarkers: {} };
   touch();
   feedAdd('start', `Game #${state.game.number} is open. Type !enter in chat to get a card.`);
   save();
@@ -360,17 +362,36 @@ function reopen() {
 // Viewers' own marks (when the admin allows it) only change what they see. They are also sent here, so the admin and
 // mod pages can show how many viewers think each not-yet-called word happened. A card whose owner marked all 25
 // squares while fewer than 22 are really marked is treated as someone clicking everything, and is not counted.
+// Whoever marks is known by their address and a random id their browser keeps ("markers"). Someone who marks squares on
+// more than one player's card is not playing their own card, so none of their marks count, on any card.
 function findPlayer(g, name, platform) {
   const q = norm(name);
   for (const [key, p] of Object.entries(g.players)) if (norm(p.name) === q && p.platform === platform) return [key, p];
   return [null, null];
 }
-function viewMark(name, platform, n, on, clear) {
+function noteMarker(g, key, markers) {
+  const cm = new Set(g.cardMarkers[key] || []);
+  for (const id of markers || []) {
+    if (!id) continue;
+    const cards = new Set(g.markerCards[id] || []);
+    if (cards.size < 5) cards.add(key);   // two is already enough to rule them out; keep the list short
+    g.markerCards[id] = [...cards];
+    cm.add(id);
+  }
+  g.cardMarkers[key] = [...cm].slice(-20);
+  const ids = Object.keys(g.markerCards);
+  if (ids.length > 20000) for (const id of ids.slice(0, ids.length - 20000)) delete g.markerCards[id];
+}
+// true when someone who marked this card also marked another player's card
+const multiMarked = (g, key) => (g.cardMarkers[key] || []).some((id) => (g.markerCards[id] || []).length > 1);
+
+function viewMark(name, platform, n, on, clear, markers) {
   const g = state.game;
   if (!state.settings.viewerMarking) throw new Error('Marking your own card is switched off in this room.');
   if (!g.active) throw new Error('No game is running.');
   const [key, p] = findPlayer(g, name, platform);
   if (!p) throw new Error('No card with that name in this game.');
+  noteMarker(g, key, markers);
   if (clear) { delete g.viewMarks[key]; save(); return { marks: [] }; }
   const num = Number(n);
   if (!Number.isInteger(num) || num === 0 || !p.card.includes(num)) throw new Error('That word is not on this card.');
@@ -385,6 +406,7 @@ function viewCounts(g = state.game) {
   for (const [key, list] of Object.entries(g.viewMarks || {})) {
     const p = g.players[key];
     if (!p || !list.length) continue;
+    if (multiMarked(g, key)) continue;               // marked by someone who also marks other cards: ignored
     const mine = new Set(list);
     const official = countMarked(g, p);
     const covered = p.card.filter((c) => isMarked(g, p, c) || mine.has(c)).length;
@@ -469,7 +491,7 @@ function adminState() {
 return {
   dir, load, saveNow, save, touch, get state() { return state; }, get slug() { return state.room.slug; },
   startGame, endGame, enter, mark, givePoints, handleChat, lookup, publicState, adminState, weekId, tickWeek,
-  idleCheck, reopen, reopensLeft, viewMark, viewCounts, REOPENS_PER_DAY,
+  idleCheck, reopen, reopensLeft, viewMark, viewCounts, multiMarked: (key) => multiMarked(state.game, key), REOPENS_PER_DAY,
 };
 }
 

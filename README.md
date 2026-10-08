@@ -73,6 +73,10 @@ Two switches on the admin page, under Points and rules:
 Viewers' marks are also sent to the server, so the admin and mod pages show, next to each word not called yet, how many viewers
 marked it ("14 viewers"): a quick way to spot something that happened on stream. A card whose owner marked all 25 squares while
 fewer than 22 are really marked is treated as someone clicking everything, and is left out of the counts.
+Viewers are told apart by their address and a random id their browser keeps. Someone who marks squares on more than one
+player's card (for example by looking up a friend's card and tapping it) is not playing their own card, so none of their
+marks count, on any card. Their marks still show on their own screen as before. This relies on `TRUST_PROXY_HOPS` being set
+behind a proxy; otherwise every viewer shares one address and the counts stay at zero.
 
 ### Idle games
 A running game closes by itself after `GAME_IDLE_MINUTES` (default 30) with nobody joining and no words called. The room's admin
