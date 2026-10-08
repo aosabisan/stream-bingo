@@ -1,4 +1,5 @@
 // YouTube live chat read the way the YouTube page itself does it. No API key.
+const { bangAt } = require('./fast');
 // Unofficial: YouTube can change this without notice. YouTube has no VIP role, so only the owner and moderators can mark words.
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const HEAD = { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9', Cookie: 'SOCS=CAI; CONSENT=YES+1' };
@@ -87,7 +88,7 @@ function start(input, emit, status) {
           if (!cc) throw new Error('YouTube chat ended.');
           // the first reply is the chat backlog: skip it so old commands are not replayed
           if (stopped) return;   // channel settings changed while this request was out: drop it
-          if (!first) for (const act of cc.actions || []) { const m = parseAction(act); if (m && !seen.has(m.id)) { seen.add(m.id); emit(m); } }
+          if (!first) for (const act of cc.actions || []) { const m = parseAction(act); if (m && !seen.has(m.id)) { seen.add(m.id); status.seen = (status.seen || 0) + 1; if (bangAt(m.text, 0)) emit(m); } }
           else for (const act of cc.actions || []) { const m = parseAction(act); if (m) seen.add(m.id); }
           first = false;
           next = continuationOf(cc);

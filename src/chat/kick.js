@@ -1,5 +1,6 @@
 // Kick chat through the public Pusher socket the Kick website itself uses. No API key.
 // Unofficial: Kick can change the key or message format. Both are editable in the admin page.
+const { kickMaybeCommand } = require('./fast');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 
 function parseEvent(raw) {
@@ -41,12 +42,19 @@ function start(cfg, emit, status) {
     ws.onopen = arm;
     ws.onmessage = (ev) => {
       arm();
-      let o; try { o = JSON.parse(ev.data); } catch { return; }
+      const raw = String(ev.data);
+      if (raw.includes('ChatMessageEvent')) {
+        status.seen = (status.seen || 0) + 1;      // every chat line counts toward the room's chat rate
+        if (!kickMaybeCommand(raw)) return;        // not a "!" command: skip without parsing
+        const m = parseEvent(raw); if (m) emit(m);
+        return;
+      }
+      let o; try { o = JSON.parse(raw); } catch { return; }
       if (o.event === 'pusher:connection_established') ws.send(JSON.stringify({ event: 'pusher:subscribe', data: { auth: '', channel: `chatrooms.${room}.v2` } }));
       else if (o.event === 'pusher_internal:subscription_succeeded') { status.state = 'connected'; retry = 3000; }
       else if (o.event === 'pusher:ping') ws.send(JSON.stringify({ event: 'pusher:pong', data: {} }));
       else if (o.event === 'pusher:error') status.error = String(o.data && (o.data.message || o.data));
-      else { const m = parseEvent(ev.data); if (m) emit(m); }
+      // (chat messages were handled above)
     };
     ws.onerror = () => { status.error = status.error || 'connection error'; };
     ws.onclose = () => { clearTimeout(watchdog); if (stopped) return; status.state = 'reconnecting'; timer = setTimeout(connect, retry); retry = Math.min(retry * 2, 60000); };

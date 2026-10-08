@@ -1,4 +1,5 @@
 // Twitch chat over the public IRC WebSocket, read-only anonymous login. No API key.
+const { twitchMaybeCommand } = require('./fast');
 function parseLine(line) {
   // @tags :nick!nick@nick.tmi.twitch.tv PRIVMSG #channel :message
   const m = /^(?:@(\S+) )?:([^!\s]+)![^ ]+ PRIVMSG #\S+ :(.*)$/.exec(line);
@@ -37,6 +38,9 @@ function start(channel, emit, status) {
         if (line.startsWith('PING')) { ws.send('PONG :tmi.twitch.tv'); continue; }
         if (line.includes(' 366 ')) { status.state = 'connected'; retry = 2000; continue; }
         if (line.includes('NOTICE') && /Login unsuccessful|Improperly formatted/i.test(line)) status.error = line;
+        if (line.indexOf(' PRIVMSG #') < 0) continue;
+        status.seen = (status.seen || 0) + 1;      // every chat line counts toward the room's chat rate
+        if (!twitchMaybeCommand(line)) continue;   // not a "!" command: skip without parsing
         const m = parseLine(line);
         if (m) emit(m);
       }

@@ -159,7 +159,10 @@ const clampInt = (v, lo, hi, d) => { const n = Math.round(Number(v)); return Num
 const str = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
 const roomInfo = (e) => {
   const r = e.game.state.room;
-  return { name: e.game.slug, kind: r.kind, listed: r.listed !== false, chatAwake: e.chat.running, idleHours: rooms.CHAT_IDLE_MS / 3600000, expireDays: rooms.EXPIRE_MS / 86400000 };
+  return {
+    name: e.game.slug, kind: r.kind, listed: r.listed !== false, chatAwake: e.chat.running, idleHours: rooms.CHAT_IDLE_MS / 3600000, expireDays: rooms.EXPIRE_MS / 86400000,
+    chatPaused: e.flood ? { since: e.flood.since, rate: e.flood.rate } : null, gameIdleMinutes: rooms.GAME_IDLE_MS / 60000,
+  };
 };
 
 // ---- a room's admin page actions ----
@@ -185,6 +188,40 @@ const admin = {
     return { room: roomInfo(e) };
   },
   async start(e) { e.game.startGame(); rooms.wake(e); return {}; },
+  async reopen(e) { const r = e.game.reopen(); rooms.wake(e); return r; },
+  // ---- word list templates: this room's own, and the site's (which a room can hide from its own list) ----
+  async templates(e) {
+    const s = e.game.state, hidden = new Set(s.room.hiddenTemplates || []);
+    return {
+      mine: (s.templates || []).map((t) => ({ id: t.id, name: t.name, count: t.phrases.length })),
+      site: rooms.templates.site().filter((t) => !t.hidden).map((t) => ({ id: t.id, name: t.name, count: t.count, hidden: hidden.has(t.id) })),
+    };
+  },
+  async templateload(e, b) {
+    const t = b.source === 'site' ? rooms.templates.siteGet(str(b.id, 20)) : (e.game.state.templates || []).find((x) => x.id === str(b.id, 20));
+    if (!t) throw new Error('That template is gone.');
+    return { name: t.name, phrases: t.phrases };
+  },
+  async templatesave(e, b) {
+    const s = e.game.state; s.templates = s.templates || [];
+    const name = str(b.name, 40); if (!name) throw new Error('Give the template a name.');
+    const phrases = rooms.cleanPhrases(b.phrases);
+    const same = s.templates.find((t) => t.name.toLowerCase() === name.toLowerCase());
+    if (same) same.phrases = phrases;
+    else { if (s.templates.length >= 30) throw new Error('This room has 30 templates already. Delete one first.'); s.templates.push({ id: rooms.newId(), name, phrases }); }
+    e.game.save(); return { replaced: !!same };
+  },
+  async templatedelete(e, b) {
+    const s = e.game.state, n = (s.templates || []).length;
+    s.templates = (s.templates || []).filter((t) => t.id !== str(b.id, 20));
+    if (s.templates.length === n) throw new Error('No such template.');
+    e.game.save(); return {};
+  },
+  async templatehide(e, b) {
+    const r = e.game.state.room, id = str(b.id, 20), set = new Set(r.hiddenTemplates || []);
+    if (b.hidden) set.add(id); else set.delete(id);
+    r.hiddenTemplates = [...set].slice(-500); e.game.save(); return {};
+  },
   async end(e) { return { summary: e.game.endGame() }; },
   async mark(e, b) { return e.game.mark(str(b.word, 100), true, 'admin'); },
   async unmark(e, b) { return e.game.mark(str(b.word, 100), false, 'admin'); },
@@ -224,6 +261,9 @@ const admin = {
     if ('allowMods' in b) s.allowMods = !!b.allowMods;
     if ('allowVips' in b) s.allowVips = !!b.allowVips;
     if ('title' in b) s.title = str(b.title, 40) || s.title;
+    if (b.theme && typeof b.theme === 'object') {
+      for (const k of ['bg', 'panel', 'accent', 'text']) if (k in b.theme) { const v = str(b.theme[k], 7); if (v === '' || /^#[0-9a-f]{6}$/i.test(v)) s.theme[k] = v.toLowerCase(); }
+    }
     if ('weeklyDay' in b) s.weeklyDay = clampInt(b.weeklyDay, 0, 6, s.weeklyDay);
     if ('weeklyHour' in b) s.weeklyHour = clampInt(b.weeklyHour, 0, 23, s.weeklyHour);
     if (b.layout) {
@@ -261,6 +301,10 @@ const siteAdmin = {
     if (str(b.confirm, 40).toLowerCase() !== e.game.slug) throw new Error('Type the room name to confirm.');
     rooms.remove(e.game.slug); return {};
   },
+  async templates() { return { templates: rooms.templates.site() }; },
+  async templateadd(b) { const t = rooms.templates.siteAdd(b.name, b.phrases); return { id: t.id }; },
+  async templatehide(b) { rooms.templates.siteSetHidden(str(b.id, 20), !!b.hidden); return {}; },
+  async templatedelete(b) { rooms.templates.siteDelete(str(b.id, 20)); return {}; },
   async settings(b) {
     if ('openRooms' in b) rooms.site.openRooms = !!b.openRooms;
     if ('maxRooms' in b) rooms.site.maxRooms = clampInt(b.maxRooms, 0, 100000, rooms.site.maxRooms);
@@ -313,6 +357,14 @@ async function handleRoom(req, res, e, rest, url, ip) {
   if (rest === '/api/card') {
     if (limited(ip, 'card', 60, 60000)) return send(res, 429, { error: 'Slow down a little.' });
     return sendPacked(req, res, packed(JSON.stringify({ matches: game.lookup(url.searchParams.get('name') || '') })));
+  }
+  if (rest === '/api/viewmark') {
+    if (req.method !== 'POST') return send(res, 405, 'Method not allowed');
+    if (!/^application\/json\b/i.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'Send JSON.' });
+    if (limited(ip, 'viewmark', 120, 60000)) return send(res, 429, { error: 'Slow down a little.' });
+    const b = await readJson(req);
+    try { return send(res, 200, { ok: true, ...game.viewMark(str(b.name, 40), str(b.platform, 10), b.n, !!b.on, !!b.clear) }); }
+    catch (err) { return send(res, 400, { error: err.message }); }
   }
   if (rest === '/background') {
     if (!fs.existsSync(bgFile(e))) return send(res, 404, 'No background');

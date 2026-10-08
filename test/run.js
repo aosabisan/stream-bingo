@@ -637,6 +637,146 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
     } finally { child.kill('SIGTERM'); }
   });
 
+  // ---------------- 2.1 features ----------------
+  await t('chat: only lines starting with "!" are parsed; every line is still counted', () => {
+    const fast = require('../src/chat/fast');
+    const tw = (x) => '@badges=;display-name=A;user-id=1 :a!a@a.tmi.twitch.tv PRIVMSG #chan :' + x;
+    assert.deepStrictEqual(['!enter', ' !mark 2', '\u0001ACTION !enter\u0001', 'hello !enter', 'lol', '\u0001ACTION waves\u0001'].map((x) => fast.twitchMaybeCommand(tw(x))), [true, true, true, false, false, false]);
+    const kf = (x) => JSON.stringify({ event: 'App\\Events\\ChatMessageEvent', channel: 'chatrooms.1.v2', data: JSON.stringify({ id: '1', content: x, sender: { id: 5, username: 'u', identity: { badges: [] } } }) });
+    assert.deepStrictEqual(['!enter', '  !mark 3', 'nice !enter', 'gg', ''].map((x) => fast.kickMaybeCommand(kf(x))), [true, true, false, false, false]);
+    assert.strictEqual(fast.kickMaybeCommand('{"event":"something else"}'), true, 'unknown shapes fall through to the full parser');
+    const chat = require('../src/chat').createChat({ handleChat: () => null, touch() {}, state: { settings: { channels: {} } } });
+    chat.status.kick = { seen: 40 }; chat.status.twitch = { seen: 2 };
+    assert.strictEqual(chat.seenTotal(), 42);
+  });
+
+  await t('idle games close after GAME_IDLE_MINUTES and can be re-opened 3 times a day, keeping cards and calls', () => {
+    const g = rooms.create('idle-room').entry.game;
+    g.startGame(); g.enter('kick', '9', 'Sleepy', ''); g.mark('1', true, 'mod');
+    const card = JSON.stringify(g.state.game.players['kick:9'].card);
+    const now = Date.now();
+    assert.strictEqual(g.idleCheck(now + 29 * 60000, 30 * 60000), false, 'not yet');
+    assert.strictEqual(g.idleCheck(now + 31 * 60000, 30 * 60000), true, 'closed');
+    assert.strictEqual(g.state.game.active, false); assert.strictEqual(g.state.game.closedIdle, true);
+    assert.strictEqual(g.publicState().game.closedIdle, true);
+    assert.strictEqual(g.handleChat({ platform: 'kick', userId: '10', name: 'Late', text: '!enter', roles: {} }).ok, false, 'closed game takes no entries');
+    for (let i = 3; i >= 1; i--) {
+      assert.strictEqual(g.reopen().reopensLeft, i - 1);
+      assert.strictEqual(g.state.game.active, true);
+      assert.strictEqual(JSON.stringify(g.state.game.players['kick:9'].card), card); assert.deepStrictEqual(g.state.game.called, [1]);
+      g.idleCheck(Date.now() + 31 * 60000, 30 * 60000);
+    }
+    assert.throws(() => g.reopen(), /3 games today/);
+    g.state.game.closedIdle = false;   // a game ended by hand is not re-openable
+    assert.throws(() => g.reopen(), /Only a game that was closed for being idle/);
+    g.state.room.reopens = { day: 'yesterday', count: 3 }; g.state.game.closedIdle = true;
+    assert.strictEqual(g.reopen().reopensLeft, 2, 'the count starts again the next day');
+    rooms.remove('idle-room');
+  });
+
+  await t('viewer marks: count per word, skip called words and "marked everything" cards, only when allowed', () => {
+    const g = rooms.create('count-room').entry.game;
+    g.startGame();
+    for (let i = 0; i < 4; i++) g.enter('twitch', String(100 + i), 'Fan' + i, '');
+    const P = (i) => g.state.game.players['twitch:' + (100 + i)];
+    assert.throws(() => g.viewMark('Fan0', 'twitch', P(0).card[0], true), /switched off/);
+    g.state.settings.viewerMarking = true;
+    const w = P(0).card[0];
+    for (let i = 0; i < 3; i++) if (P(i).card.includes(w)) g.viewMark('Fan' + i, 'twitch', w, true);
+    const expect = [0, 1, 2].filter((i) => P(i).card.includes(w)).length;
+    assert.strictEqual(g.viewCounts()[w], expect);
+    assert.throws(() => g.viewMark('Fan0', 'twitch', 0, true), /not on this card/);
+    assert.throws(() => g.viewMark('Nobody', 'twitch', w, true), /No card/);
+    // un-marking lowers the count; a called word is not counted any more
+    g.viewMark('Fan0', 'twitch', w, false);
+    assert.strictEqual(g.viewCounts()[w] || 0, expect - 1);
+    g.viewMark('Fan0', 'twitch', w, true);
+    g.mark(String(w), true, 'mod');
+    assert.strictEqual(g.viewCounts()[w], undefined, 'called words are not counted');
+    // Fan3 marks every square while few are really called: ignored entirely
+    for (const c of P(3).card) if (c) g.viewMark('Fan3', 'twitch', c, true);
+    const counts = g.viewCounts(), fan3word = P(3).card.find((c) => c && !g.state.game.called.includes(c) && !P(0).card.includes(c) && !P(1).card.includes(c) && !P(2).card.includes(c));
+    if (fan3word) assert.strictEqual(counts[fan3word], undefined, 'the blackout-clicker is not counted');
+    // the admin and mod views carry the counts
+    g.viewMark('Fan1', 'twitch', P(1).card.find((c) => c && !g.state.game.called.includes(c)), true);
+    assert.ok(Object.keys(g.adminState().game.viewCounts).length >= 1);
+    g.viewMark('Fan1', 'twitch', 0, false, true);
+    assert.strictEqual(g.state.game.viewMarks['twitch:101'], undefined, 'clear removes a viewer\'s marks');
+    rooms.remove('count-room');
+  });
+
+  await t('spam guard: lots of chat with no game activity pauses a community room; the admin page lifts it', () => {
+    const e = rooms.create('noisy-room').entry;
+    const now = Date.now();
+    assert.strictEqual(rooms.chatLimit(2), Infinity); assert.strictEqual(rooms.chatLimit(10), 1000); assert.strictEqual(rooms.chatLimit(20), 500); assert.strictEqual(rooms.chatLimit(120), 300);
+    rooms.wake(e);
+    e.game.state.room.lastActive = now - 20 * 60000;      // quiet for 20 minutes: 500 lines a minute allowed
+    const feed = (n) => { e.chat.status.kick = { ...(e.chat.status.kick || {}), seen: ((e.chat.status.kick && e.chat.status.kick.seen) || 0) + n }; rooms.tick(now); };
+    feed(400); assert.ok(!e.flood && e.chat.running, 'under the limit');
+    feed(900); feed(900); assert.ok(!e.flood, 'two minutes over is not enough');
+    feed(900); assert.ok(e.flood, 'three minutes over pauses chat');
+    assert.strictEqual(e.chat.running, false);
+    assert.match(rooms.summary('noisy-room', e).chat, /spam guard/);
+    rooms.wake(e); assert.ok(!e.flood && e.chat.running, 'opening the admin page lifts it');
+    // a featured room is never paused
+    const f = rooms.create('busy-featured', { kind: 'dedicated' }).entry; f.game.state.room.lastActive = now - 3600000; rooms.wake(f); f.game.state.room.lastActive = now - 3600000;
+    for (let i = 0; i < 4; i++) { f.chat.status.kick = { seen: ((f.chat.status.kick && f.chat.status.kick.seen) || 0) + 5000 }; rooms.tick(now); }
+    assert.ok(!f.flood && f.chat.running);
+    rooms.remove('noisy-room'); rooms.remove('busy-featured');
+  });
+
+  await t('templates, page colours and viewer marking over HTTP', async () => {
+    const { spawn } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bingo-21-'));
+    const port = 3915, b6 = 'http://localhost:' + port;
+    const child = spawn(process.execPath, [path.join(__dirname, '..', 'server.js')], { env: { ...process.env, DATA_DIR: dir, PORT: String(port), SITE_ADMIN_PASSWORD: 'owner-pw', ADMIN_PASSWORD: '', TRUST_PROXY_HOPS: '' }, stdio: 'ignore' });
+    const call = (u, pw, body) => fetch(b6 + u, { method: 'POST', headers: { 'x-admin-password': pw, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+    try {
+      for (let i = 0; i < 50; i++) { try { if ((await fetch(b6 + '/healthz')).ok) break; } catch {} await new Promise((r) => setTimeout(r, 100)); }
+      const mk = await fetch(b6 + '/api/rooms', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'tpl-room' }) }).then((r) => r.json());
+      const A = (action, body) => call('/tpl-room/api/admin/' + action, mk.password, body);
+      const S2 = (action, body) => call('/api/site/' + action, 'owner-pw', body);
+      const words = (k) => Array.from({ length: 26 }, (_, i) => `${k} word ${i + 1}`);
+      // site templates
+      assert.strictEqual((await S2('templateadd', { name: 'Too short', phrases: ['a', 'b'] })).status, 400);
+      const st = await S2('templateadd', { name: 'Horror games', phrases: words('horror') }); assert.strictEqual(st.status, 200);
+      const st2 = await S2('templateadd', { name: 'Racing', phrases: words('racing') });
+      // a room saves its own, loads either kind, hides a site one
+      assert.strictEqual((await A('templatesave', { name: 'My list', phrases: words('mine') })).status, 200);
+      assert.strictEqual((await A('templatesave', { name: 'my list', phrases: words('mine2') })).body.replaced, true, 'same name updates');
+      let tl = (await A('templates')).body;
+      assert.deepStrictEqual(tl.mine.map((x) => x.name), ['My list']); assert.ok(tl.site.some((x) => x.name === 'Horror games'));
+      assert.strictEqual((await A('templateload', { source: 'site', id: st.body.id })).body.phrases[0], 'horror word 1');
+      assert.strictEqual((await A('templateload', { source: 'room', id: tl.mine[0].id })).body.phrases[0], 'mine2 word 1');
+      await A('templatehide', { id: st.body.id, hidden: true });
+      assert.strictEqual((await A('templates')).body.site.find((x) => x.id === st.body.id).hidden, true);
+      // the site owner hides one from every room and deletes another
+      await S2('templatehide', { id: st2.body.id, hidden: true });
+      assert.ok(!(await A('templates')).body.site.some((x) => x.id === st2.body.id));
+      assert.strictEqual((await A('templateload', { source: 'site', id: st2.body.id })).status, 400);
+      await S2('templatedelete', { id: st.body.id });
+      assert.strictEqual((await S2('templates')).body.templates.length, 1);
+      await A('templatedelete', { id: tl.mine[0].id }); assert.strictEqual((await A('templates')).body.mine.length, 0);
+      // page colours: only #rrggbb, shown to every visitor
+      await A('settings', { theme: { bg: '#0b1726', panel: 'red; x', accent: '#3EC1FF', text: '' } });
+      assert.deepStrictEqual((await fetch(b6 + '/tpl-room/api/state').then((r) => r.json())).theme, { bg: '#0b1726', panel: '', accent: '#3ec1ff', text: '' });
+      // viewer marks sent from the room page
+      const vm = (body, ct = 'application/json') => fetch(b6 + '/tpl-room/api/viewmark', { method: 'POST', headers: { 'Content-Type': ct }, body: JSON.stringify(body) }).then((r) => r.status);
+      await A('start'); await A('simulate', { name: 'Clicker', platform: 'kick', text: '!enter' });
+      const cell = (await fetch(b6 + '/tpl-room/api/card?name=Clicker').then((r) => r.json())).matches[0].cells.find((c) => !c.free);
+      assert.strictEqual(await vm({ name: 'Clicker', platform: 'kick', n: cell.n, on: true }), 400, 'refused while viewer marking is off');
+      await A('settings', { viewerMarking: true });
+      assert.strictEqual(await vm({ name: 'Clicker', platform: 'kick', n: cell.n, on: true }), 200);
+      assert.strictEqual(await vm({ name: 'Clicker', platform: 'kick', n: cell.n, on: true }, 'text/plain'), 415);
+      assert.strictEqual(await vm({ name: 'Clicker', platform: 'kick', n: 9999, on: true }), 400);
+      assert.strictEqual((await A('status')).body.game.viewCounts[cell.n], 1);
+      assert.strictEqual((await call('/tpl-room/api/mod/status', '', {}).then(() => fetch(b6 + '/tpl-room/api/mod/status', { headers: { 'x-mod-password': mk.modPassword } })).then((r) => r.json())).game.viewCounts[cell.n], 1, 'mods see the counts too');
+      // re-open only applies to idle-closed games
+      assert.match((await A('reopen')).body.error, /already running/);
+      await A('end'); assert.match((await A('reopen')).body.error, /Only a game that was closed for being idle/);
+    } finally { child.kill('SIGTERM'); }
+  });
+
   console.log(`\n${pass} passed${process.exitCode ? ', some FAILED' : ''}`);
   game.saveNow(); process.exit(process.exitCode || 0);
 })();

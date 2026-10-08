@@ -64,11 +64,39 @@ To give every new room a different starting word list, put a `words.default.txt`
 
 ### Viewers marking their own cards
 Two switches on the admin page, under Points and rules:
-- **Viewers can click squares to mark their card.** Clicking a square on the public page dabs it in the viewer's chosen color.
-  This only changes what that viewer sees, in their own browser. Nothing is sent to the server, and points, bingos and blackouts are
-  still worked out by the server from the words your mods call.
+- **Viewers can click squares to mark their card.** Tapping a square on the room page fills it in exactly the way a called word
+  is filled in; tapping again clears it. Only that viewer sees it (it is kept in their browser), and it never counts toward a bingo:
+  points, bingos and blackouts are still worked out by the server from the words your mods call.
 - **Don't auto-mark cards on the page** (needs the first switch). Called words are no longer filled in on viewers' cards,
-  so viewers play along by dabbing squares themselves. Scoring on the server is unchanged.
+  so viewers play along by marking squares themselves. Scoring on the server is unchanged.
+
+Viewers' marks are also sent to the server, so the admin and mod pages show, next to each word not called yet, how many viewers
+marked it ("14 viewers"): a quick way to spot something that happened on stream. A card whose owner marked all 25 squares while
+fewer than 22 are really marked is treated as someone clicking everything, and is left out of the counts.
+
+### Idle games
+A running game closes by itself after `GAME_IDLE_MINUTES` (default 30) with nobody joining and no words called. The room's admin
+page then shows a **Re-open** button that carries on with the same game: same cards, calls and wagers. Each room can re-open
+3 games a day. Starting a new game always works.
+
+### Word list templates
+Under the word list on the admin page: save the current list as a template, load one of your templates or one the site offers
+into the list (then press **Save word list**), delete your own, and hide site templates you do not want to see.
+The site owner adds, hides (from every room) and deletes site templates on `/site-admin`.
+
+### Page colours
+Each room's admin page has a **Page colours** box: background, panels, accent and text for the room's public page and mod page,
+with a few ready-made sets and a preview. Every visitor to that room sees them. The card's own colours are set separately,
+under Card background.
+
+## Chat load and the spam guard
+- Every chat reader looks only at the first character of a message, in the raw data as it arrives. Anything that does not start
+  with `!` is counted and dropped without being parsed. On a test machine a room handles 200,000 ordinary chat lines in about 65 ms.
+- **Spam guard** (community rooms only; featured rooms are trusted): the longer a room goes without any game activity (a join,
+  a called word, a game started, its admin page open), the fewer chat lines a minute it may take in. With activity in the last
+  5 minutes there is no limit; after that the limit is 10,000 divided by the minutes since activity, never below 300 a minute.
+  For example, nobody joining for 10 minutes allows 1,000 lines a minute, 20 minutes allows 500. Three minutes in a row over the
+  limit pauses that room's chat; opening its admin page or starting a game turns it back on. Set `CHAT_GUARD=0` to switch it off.
 
 ## Putting it on the internet
 The server has to stay running, because it is the thing reading chat. It listens on `PORT` (default 3000) on all addresses.
@@ -96,6 +124,8 @@ Settings that matter on a server:
   running game and the most recent use win; the rest sleep until there is room. Featured rooms are always connected and do not count.
 - `MAX_BACKGROUND_MB` (default 4): largest card background a room can upload.
 - `DELETED_KEEP_DAYS` (default 30): deleted and expired rooms stay in `DATA_DIR/deleted-rooms` this long, then are erased.
+- `GAME_IDLE_MINUTES` (default 30, `0` = never): a running game with no joins and no calls this long closes (see Idle games).
+- `CHAT_GUARD` (default on, `0` = off): the spam guard (see Chat load).
 - `PORT`: set it if your host tells you which port to use.
 - `TZ`: the weekly leaderboard resets on the server's clock. Servers usually run on UTC, so set `TZ` to your own time zone.
 - `TRUST_PROXY_HOPS`: **set this when the site sits behind a reverse proxy** (Render, Railway, Fly.io, Caddy, nginx, a Cloudflare

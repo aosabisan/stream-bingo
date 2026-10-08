@@ -15,6 +15,16 @@ const CHAT_IDLE_MS = num(process.env.CHAT_IDLE_HOURS, 6) * 3600000;   // communi
 const EXPIRE_MS = num(process.env.ROOM_EXPIRE_DAYS, 90) * 86400000;   // community rooms are removed after this long unused (0 = never)
 const MAX_AWAKE = num(process.env.MAX_AWAKE_ROOMS, 100);                // most community rooms with chat connected at once
 const TRASH_KEEP_MS = num(process.env.DELETED_KEEP_DAYS, 30) * 86400000; // deleted rooms are erased for good after this
+const GAME_IDLE_MS = num(process.env.GAME_IDLE_MINUTES, 30) * 60000;      // a running game with no joins or calls this long closes (0 = never)
+const CHAT_GUARD = process.env.CHAT_GUARD !== '0';                       // pause chat in community rooms flooded with chat but no game activity
+const TEMPLATES_FILE = path.join(DATA_DIR, 'templates.json');
+
+// Spam guard, a sliding scale: the longer a community room goes without any game activity (a join, a called word,
+// a game started, the admin page open), the fewer chat lines a minute it may take in before its chat is paused.
+// Under 5 minutes since activity there is no limit; after that it is 10,000 / minutes, but never below 300 a minute.
+// So with nobody joining for 10 minutes, 1,000 lines a minute is the most allowed. Three minutes over in a row pauses
+// chat until the admin page is opened or a game is started.
+function chatLimit(minutesQuiet) { return minutesQuiet < 5 ? Infinity : Math.max(300, Math.round(10000 / minutesQuiet)); }
 
 // Room names: 3-30 characters, lower case letters, numbers, - and _ (so Twitch and Kick names fit). Words used by the site are kept back.
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{2,29}$/;
@@ -63,6 +73,33 @@ function passwordCheck(game, given) {
 }
 const newPassword = () => crypto.randomBytes(9).toString('base64url');
 
+// ---- word list templates ----
+// Site templates (made by the site owner, offered to every room) live in DATA_DIR/templates.json.
+// A room's own templates live in its state; a room can hide site templates from its own list.
+let siteTemplates = [];
+function loadTemplates() { try { siteTemplates = JSON.parse(fs.readFileSync(TEMPLATES_FILE, 'utf8')); if (!Array.isArray(siteTemplates)) siteTemplates = []; } catch { siteTemplates = []; } }
+function saveTemplates() { const tmp = TEMPLATES_FILE + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(siteTemplates)); fs.renameSync(tmp, TEMPLATES_FILE); }
+const newId = () => crypto.randomBytes(6).toString('base64url');
+// the same rules as the admin page's word list: 24 to 300 different words, 80 characters each
+function cleanPhrases(list) {
+  if (!Array.isArray(list)) throw new Error('The word list is missing.');
+  const out = [...new Set(list.map((x) => String(x == null ? '' : x).trim().slice(0, 80)).filter(Boolean))].slice(0, 300);
+  if (out.length < 24) throw new Error(`A template needs at least 24 different words (got ${out.length}).`);
+  return out;
+}
+const cleanName2 = (v) => { const n = String(v == null ? '' : v).trim().slice(0, 40); if (!n) throw new Error('Give the template a name.'); return n; };
+const templateList = {
+  site: () => siteTemplates.map((t) => ({ id: t.id, name: t.name, count: t.phrases.length, hidden: !!t.hidden })),
+  siteAdd(name, phrases) {
+    if (siteTemplates.length >= 200) throw new Error('There are 200 site templates already. Delete some first.');
+    const t = { id: newId(), name: cleanName2(name), phrases: cleanPhrases(phrases), created: Date.now() };
+    siteTemplates.push(t); saveTemplates(); return t;
+  },
+  siteSetHidden(id, hidden) { const t = siteTemplates.find((x) => x.id === id); if (!t) throw new Error('No such template.'); t.hidden = !!hidden; saveTemplates(); },
+  siteDelete(id) { const n = siteTemplates.length; siteTemplates = siteTemplates.filter((x) => x.id !== id); if (n === siteTemplates.length) throw new Error('No such template.'); saveTemplates(); },
+  siteGet: (id) => siteTemplates.find((x) => x.id === id && !x.hidden),
+};
+
 function saveSite() { const tmp = SITE_FILE + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(site, null, 1)); fs.renameSync(tmp, SITE_FILE); }
 
 function open(name) {
@@ -100,6 +137,7 @@ function migrateLegacy(legacyPassword) {
 function init({ legacyPassword }) {
   fs.mkdirSync(ROOMS_DIR, { recursive: true });
   try { site = { ...site, ...JSON.parse(fs.readFileSync(SITE_FILE, 'utf8')) }; } catch {}
+  loadTemplates();
   if (process.env.MAX_ROOMS) site.maxRooms = num(process.env.MAX_ROOMS, 300);
   migrateLegacy(legacyPassword);
   for (const name of fs.readdirSync(ROOMS_DIR)) {
@@ -139,10 +177,24 @@ function remove(name) {
 const isDedicated = (e) => e.game.state.room.kind === 'dedicated';
 function awake(e, now = Date.now()) {
   const s = e.game.state;
+  if (e.flood && !isDedicated(e)) return false;
   return isDedicated(e) || s.game.active || now - (s.room.lastActive || 0) < CHAT_IDLE_MS;
 }
-// an admin visit or a game start: note it and connect chat if it was asleep
-function wake(e) { e.game.touch(); if (!e.chat.running) e.chat.startAll(); }
+// an admin visit or a game start: note it, lift a spam-guard pause, and connect chat if it was asleep
+function wake(e) { e.game.touch(); e.flood = null; e.floodStrikes = 0; if (!e.chat.running) { e.chat.startAll(); e.lastSeen = 0; } }
+
+function guard(e, now) {
+  if (!CHAT_GUARD || isDedicated(e) || !e.chat.running) { e.lastSeen = e.chat.seenTotal(); return; }
+  const total = e.chat.seenTotal();
+  const perMin = total >= (e.lastSeen || 0) ? total - (e.lastSeen || 0) : total;   // the count restarts when chat reconnects
+  e.lastSeen = total; e.chatRate = perMin;
+  const quiet = (now - (e.game.state.room.lastActive || 0)) / 60000;
+  if (perMin > chatLimit(quiet)) e.floodStrikes = (e.floodStrikes || 0) + 1; else e.floodStrikes = 0;
+  if (e.floodStrikes >= 3) {
+    e.flood = { since: now, rate: perMin };
+    console.log(`Room ${e.game.slug}: chat paused, ${perMin} lines a minute with no game activity for ${Math.round(quiet)} minutes.`);
+  }
+}
 // channels changed: reconnect now if the room is awake
 function channelsChanged(e) { if (awake(e)) e.chat.startAll(); else e.chat.stopAll(); }
 
@@ -167,17 +219,25 @@ function pruneTrash(now) {
 let lastPrune = 0;
 function tick(now = Date.now()) {
   if (now - lastPrune > 3600000) { lastPrune = now; pruneTrash(now); }
-  const allowed = allowedAwake(now);
+  // 1. per-room housekeeping: weekly boards, idle games, spam guard, expiry
   for (const [name, e] of [...rooms]) {
     try {
       e.game.tickWeek();
+      e.game.idleCheck(now, GAME_IDLE_MS);
+      guard(e, now);
       const s = e.game.state;
       if (!isDedicated(e) && EXPIRE_MS && !s.game.active && now - (s.room.lastActive || s.room.created || 0) > EXPIRE_MS) {
         console.log(`Room ${name} was unused for ${Math.round(EXPIRE_MS / 86400000)} days and was removed.`);
-        remove(name); continue;
+        remove(name);
       }
+    } catch (err) { console.error(`Room ${name}:`, err.message); }
+  }
+  // 2. which rooms keep chat connected
+  const allowed = allowedAwake(now);
+  for (const [name, e] of rooms) {
+    try {
       const on = isDedicated(e) || allowed.has(name);
-      if (on && !e.chat.running) e.chat.startAll();
+      if (on && !e.chat.running) { e.chat.startAll(); e.lastSeen = 0; }
       if (!on && e.chat.running) e.chat.stopAll();
     } catch (err) { console.error(`Room ${name}:`, err.message); }
   }
@@ -189,7 +249,7 @@ function summary(name, e) {
     name, title: s.settings.title, kind: s.room.kind, listed: s.room.listed !== false,
     live: g.active, players: Object.keys(g.players).length, game: g.number,
     channels: { twitch: s.settings.channels.twitch, kick: s.settings.channels.kick, youtube: s.settings.channels.youtube ? 'yes' : '', rumble: s.settings.channels.rumble ? 'yes' : '' },
-    created: s.room.created, lastActive: s.room.lastActive, chat: e.chat.running ? 'on' : 'asleep',
+    created: s.room.created, lastActive: s.room.lastActive, chat: e.flood ? 'paused (spam guard)' : e.chat.running ? 'on' : 'asleep', chatRate: e.chatRate || 0,
   };
 }
 const list = () => [...rooms].map(([n, e]) => summary(n, e));
@@ -198,6 +258,7 @@ function saveAll() { for (const e of rooms.values()) { try { e.game.saveNow(); }
 
 module.exports = {
   init, create, remove, get: (name) => rooms.get(cleanName(name)), list, summary, tick, wake, awake, channelsChanged, saveAll,
+  templates: templateList, cleanPhrases, newId, chatLimit, GAME_IDLE_MS,
   checkName, passwordCached, passwordCheck, setPassword, pruneTrash, MAX_AWAKE, TRASH_DIR, newPassword, saveSite, isDedicated,
   get site() { return site; }, get count() { return rooms.size; }, ROOMS_DIR, CHAT_IDLE_MS, EXPIRE_MS,
 };

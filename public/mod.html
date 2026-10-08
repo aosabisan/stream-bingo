@@ -20,6 +20,8 @@
 .mwords button.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 700; }
 .mwords button i { font-style: normal; opacity: .65; min-width: 2em; font-variant-numeric: tabular-nums; }
 .mwords button[disabled] { opacity: .6; cursor: default; }
+.mwords button .wt { flex: 1; }
+.mwords button .vc { font-size: .8rem; padding: 1px 8px; border-radius: 99px; background: var(--bg); border: 1px solid var(--line); align-self: center; white-space: nowrap; }
 .mtop { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 </style>
 </head>
@@ -66,7 +68,6 @@
         <div id="cardArea" hidden>
           <div class="dabbar" id="dabBar" hidden>
             <span class="dablbl" id="dabLbl">Tap a square to mark it</span>
-            <span class="swatches" id="swatches" role="radiogroup" aria-label="Marker color"></span>
             <button class="btn ghost sm" id="dabClear" type="button">Clear my marks</button>
           </div>
           <canvas id="card" aria-label="Your bingo card"></canvas>
@@ -145,7 +146,8 @@
     g.phrases.forEach((t, i) => {
       const n = i + 1, on = g.called.includes(n);
       if (q && !t.toLowerCase().includes(q) && String(n) !== q) return;
-      const b = el('button', { type: 'button', className: on ? 'on' : '', disabled: !g.active }, el('i', { textContent: n }), (on ? '\u2713 ' : '') + t);
+      const c = !on && g.viewCounts && g.viewCounts[n];
+      const b = el('button', { type: 'button', className: on ? 'on' : '', disabled: !g.active }, el('i', { textContent: n }), el('span', { className: 'wt', textContent: (on ? '\u2713 ' : '') + t }), c ? el('span', { className: 'vc', title: 'Viewers who marked this on their own card', textContent: c + (c === 1 ? ' viewer' : ' viewers') }) : '');
       b.onclick = async () => {
         if (busy) return; busy = true;
         try { await api(on ? 'unmark' : 'mark', { word: String(n) }); say((on ? 'Un-called #' : 'Called #') + n, true); await refresh(); loadState(); loadCard(); }

@@ -42,7 +42,9 @@ function createChat(room) {
     running = false;
   }
 
-  return { startAll, stopAll, status, log, onMessage, get running() { return running; } };
+  // chat lines seen since chat was (re)connected, over all platforms (the readers count every line, commands or not)
+  const seenTotal = () => PLATFORMS.reduce((n, k) => n + ((status[k] && status[k].seen) || 0), 0);
+  return { startAll, stopAll, status, log, onMessage, seenTotal, get running() { return running; } };
 }
 
 module.exports = { createChat };

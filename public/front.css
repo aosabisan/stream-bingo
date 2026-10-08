@@ -35,9 +35,6 @@ a.btn { display: inline-block; text-decoration: none; }
 .dabbar[hidden] { display: none; }
 .dabbar { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; margin-top: 16px; }
 .dablbl { color: var(--muted); font-size: .92rem; }
-.swatches { display: flex; gap: 8px; }
-.swatches button { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); cursor: pointer; padding: 0; }
-.swatches button[aria-checked=true] { border-color: var(--fg); box-shadow: 0 0 0 3px rgba(255,255,255,.18); }
 .btn.sm { padding: 6px 12px; font-size: .9rem; margin-left: auto; }
 canvas#card.dabbable { cursor: pointer; touch-action: manipulation; }
 canvas#card { display: block; width: 100%; max-width: 560px; height: auto; margin: 16px auto 0; border-radius: 8px; background: var(--panel2); }

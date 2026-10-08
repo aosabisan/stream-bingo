@@ -1,4 +1,5 @@
 // Rumble live chat through the stream Rumble's own page uses. No API key.
+const { bangAt } = require('./fast');
 // EXPERIMENTAL: this is the least documented of the four. Raw samples are kept in the admin page so it can be adjusted quickly.
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 
@@ -65,7 +66,7 @@ function start(input, emit, status) {
             if (status.samples.length < 3) status.samples.push(dataLine.slice(0, 600));
             // "init" carries the recent history: skip it so old commands are not replayed
             if (obj.type === 'init') { for (const m of parsePayload(obj)) seen.add(m.id); continue; }
-            for (const m of parsePayload(obj)) { if (m.id != null && seen.has(m.id)) continue; seen.add(m.id); emit(m); }
+            for (const m of parsePayload(obj)) { if (m.id != null && seen.has(m.id)) continue; seen.add(m.id); status.seen = (status.seen || 0) + 1; if (bangAt(String(m.text || ''), 0)) emit(m); }
           }
         }
       } catch (e) { if (stopped) return; status.state = 'error'; status.error = e.message; }

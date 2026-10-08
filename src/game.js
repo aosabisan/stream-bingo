@@ -44,6 +44,8 @@ function defaults() {
       weeklyDay: 0,
       weeklyHour: 20,
       title: 'STREAM BINGO',
+      // colours of the room's public page (empty = the site's own); hex like #1d1830
+      theme: { bg: '', panel: '', accent: '', text: '' },
       backgroundVersion: 0,
       layout: {
         width: 1000, height: 1200,
@@ -52,14 +54,15 @@ function defaults() {
         accent: '#ff4d6d', cellFill: 'rgba(0,0,0,0.55)', cellBorder: 'rgba(255,255,255,0.6)', textColor: '#ffffff',
       },
     },
-    game: { active: false, number: 0, startedAt: 0, phrases: [], called: [], players: {}, bingoOrder: [], blackoutOrder: [] },
+    game: { active: false, number: 0, startedAt: 0, phrases: [], called: [], players: {}, bingoOrder: [], blackoutOrder: [], viewMarks: {}, lastActivity: 0 },
+    templates: [],   // this room's own saved word lists: [{ id, name, phrases }]
     accounts: {},
     week: { id: '' },
     lastWeek: null,
     feed: [],
     // about the room itself (not shown to viewers): kind is 'dedicated' (made by the site owner, never expires,
     // chat always connected) or 'community' (made from the home page)
-    room: { slug: '', kind: 'community', listed: true, created: 0, lastActive: 0, adminHash: '', adminSalt: '' },
+    room: { slug: '', kind: 'community', listed: true, created: 0, lastActive: 0, adminHash: '', adminSalt: '', hiddenTemplates: [], reopens: { day: '', count: 0 } },
   };
 }
 
@@ -90,6 +93,8 @@ function load() {
     state = defaults();
   }
   delete state.events; delete state.eventSeq;   // left over from older versions
+  if (!state.game.viewMarks) state.game.viewMarks = {};
+  if (state.game.active && !state.game.lastActivity) state.game.lastActivity = Date.now();   // games from before idle closing start their clock now
   if (!state.settings.modPassword) {
     state.settings.modPassword = require('crypto').randomBytes(6).toString('base64url');
     saveNow();
@@ -193,7 +198,7 @@ function startGame() {
   if (g.active) throw new Error(`Game #${g.number} is already running.`);
   const phrases = [...new Set(state.settings.phrases.map((s) => s.trim()).filter(Boolean))];
   if (phrases.length < 24) throw new Error(`Need at least 24 words (have ${phrases.length}).`);
-  state.game = { active: true, number: g.number + 1, startedAt: Date.now(), phrases, called: [], players: {}, bingoOrder: [], blackoutOrder: [] };
+  state.game = { active: true, number: g.number + 1, startedAt: Date.now(), lastActivity: Date.now(), phrases, called: [], players: {}, bingoOrder: [], blackoutOrder: [], viewMarks: {} };
   touch();
   feedAdd('start', `Game #${state.game.number} is open. Type !enter in chat to get a card.`);
   save();
@@ -228,7 +233,7 @@ function enter(platform, userId, name, arg) {
   }
   addPoints(a, -wager + P().entryBonus);
   g.players[key] = { name, platform, card: newCard(g.phrases.length), wager, ignored: state.settings.countEarlyCalls ? [] : [...g.called], bingo: false, blackout: false };
-  touch();
+  touch(); g.lastActivity = Date.now();
   feedAdd('join', `${name} joined${wager ? ` with a ${wager} ${P().currency} wager` : ''}`);
   const wins = checkWinners(g, [key]);   // nobody else's card changed
   save();
@@ -269,7 +274,7 @@ function mark(input, on, who = 'mod') {
   }
   if (!changed.length) throw new Error(on ? 'Already called.' : 'Not called yet.');
   for (const n of changed) feedAdd(on ? 'call' : 'uncall', `${on ? 'Called' : 'Un-called'} #${n} ${g.phrases[n - 1]} (by ${who})`);
-  touch();
+  touch(); g.lastActivity = Date.now();
   const wins = on ? checkWinners(g) : [];
   save();
   return { changed, wins };
@@ -320,6 +325,75 @@ function handleChat(m) {
   }
 }
 
+// ---------- idle games ----------
+// A running game with nobody joining and no words called for idleMs is closed. The room's admin can re-open the
+// same game (same cards, calls and wagers) up to REOPENS_PER_DAY times a day.
+const REOPENS_PER_DAY = 3;
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+function reopensLeft() {
+  const r = state.room.reopens || { day: '', count: 0 };
+  return REOPENS_PER_DAY - (r.day === today() ? r.count : 0);
+}
+function idleCheck(now, idleMs) {
+  const g = state.game;
+  if (!idleMs || !g.active || now - (g.lastActivity || g.startedAt || now) < idleMs) return false;
+  g.active = false; g.closedIdle = true; g.closedAt = now;
+  feedAdd('end', `Game #${g.number} closed: nobody joined and no words were called for ${Math.round(idleMs / 60000)} minutes.`);
+  save();
+  return true;
+}
+function reopen() {
+  const g = state.game;
+  if (g.active) throw new Error(`Game #${g.number} is already running.`);
+  if (!g.closedIdle) throw new Error('Only a game that was closed for being idle can be re-opened. Start a new game instead.');
+  const left = reopensLeft();
+  if (left <= 0) throw new Error(`This room has re-opened ${REOPENS_PER_DAY} games today already. Start a new game instead.`);
+  const r = state.room.reopens && state.room.reopens.day === today() ? state.room.reopens : { day: today(), count: 0 };
+  r.count++; state.room.reopens = r;
+  g.active = true; g.closedIdle = false; g.closedAt = 0; g.lastActivity = Date.now();
+  feedAdd('start', `Game #${g.number} is open again. Type !enter in chat to get a card.`);
+  touch(); save();
+  return { reopensLeft: left - 1 };
+}
+
+// ---------- viewers marking their own cards ----------
+// Viewers' own marks (when the admin allows it) only change what they see. They are also sent here, so the admin and
+// mod pages can show how many viewers think each not-yet-called word happened. A card whose owner marked all 25
+// squares while fewer than 22 are really marked is treated as someone clicking everything, and is not counted.
+function findPlayer(g, name, platform) {
+  const q = norm(name);
+  for (const [key, p] of Object.entries(g.players)) if (norm(p.name) === q && p.platform === platform) return [key, p];
+  return [null, null];
+}
+function viewMark(name, platform, n, on, clear) {
+  const g = state.game;
+  if (!state.settings.viewerMarking) throw new Error('Marking your own card is switched off in this room.');
+  if (!g.active) throw new Error('No game is running.');
+  const [key, p] = findPlayer(g, name, platform);
+  if (!p) throw new Error('No card with that name in this game.');
+  if (clear) { delete g.viewMarks[key]; save(); return { marks: [] }; }
+  const num = Number(n);
+  if (!Number.isInteger(num) || num === 0 || !p.card.includes(num)) throw new Error('That word is not on this card.');
+  const set = new Set(g.viewMarks[key] || []);
+  if (on) set.add(num); else set.delete(num);
+  if (set.size) g.viewMarks[key] = [...set]; else delete g.viewMarks[key];
+  save();
+  return { marks: [...set] };
+}
+function viewCounts(g = state.game) {
+  const counts = {};
+  for (const [key, list] of Object.entries(g.viewMarks || {})) {
+    const p = g.players[key];
+    if (!p || !list.length) continue;
+    const mine = new Set(list);
+    const official = countMarked(g, p);
+    const covered = p.card.filter((c) => isMarked(g, p, c) || mine.has(c)).length;
+    if (covered === 25 && official < 22) continue;   // "marked everything": ignored
+    for (const n of mine) if (!g.called.includes(n)) counts[n] = (counts[n] || 0) + 1;
+  }
+  return counts;
+}
+
 // ---------- views for the website ----------
 function cardView(p, g, a) {
   // early: the word was called before this player joined, so it does not count on their card
@@ -361,9 +435,10 @@ function publicState() {
     channels: { twitch: s.channels.twitch, kick: s.channels.kick, youtube: s.channels.youtube, rumble: s.channels.rumble },
     layout: s.layout, backgroundVersion: s.backgroundVersion,
     cards: { clickToMark: !!s.viewerMarking, autoMark: !(s.viewerMarking && s.manualMarking) },
+    theme: s.theme,
     rules: { entryBonus: s.points.entryBonus, starting: s.points.starting, bingoReward: s.points.bingoReward, blackoutReward: s.points.blackoutReward, bingoMultiplier: s.points.bingoMultiplier, blackoutMultiplier: s.points.blackoutMultiplier, maxWager: s.points.maxWager },
     game: {
-      active: g.active, number: g.number, players: Object.keys(g.players).length, total: g.phrases.length,
+      active: g.active, number: g.number, players: Object.keys(g.players).length, total: g.phrases.length, closedIdle: !!g.closedIdle,
       called: g.called.map((n) => ({ n, text: g.phrases[n - 1] })),
       bingos: g.bingoOrder.length, blackouts: g.blackoutOrder.length,
     },
@@ -380,16 +455,21 @@ function publicState() {
 }
 
 function adminState() {
-  const g = state.game;
+  const g = state.game, s0 = state.settings;
   return {
     settings: state.settings,
-    game: { active: g.active, number: g.number, phrases: g.phrases, called: g.called, players: Object.keys(g.players).length },
+    game: {
+      active: g.active, number: g.number, phrases: g.phrases, called: g.called, players: Object.keys(g.players).length,
+      closedIdle: !!g.closedIdle, closedAt: g.closedAt || 0, reopensLeft: reopensLeft(), lastActivity: g.lastActivity || 0,
+      viewCounts: s0.viewerMarking ? viewCounts(g) : {},
+    },
   };
 }
 
 return {
   dir, load, saveNow, save, touch, get state() { return state; }, get slug() { return state.room.slug; },
   startGame, endGame, enter, mark, givePoints, handleChat, lookup, publicState, adminState, weekId, tickWeek,
+  idleCheck, reopen, reopensLeft, viewMark, viewCounts, REOPENS_PER_DAY,
 };
 }
 

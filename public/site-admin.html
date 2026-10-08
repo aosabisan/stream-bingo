@@ -83,6 +83,20 @@ table.rooms td.acts .btn { margin: 0 4px 4px 0; }
         <p class="hint" id="limits"></p>
       </section>
     </div>
+
+    <section class="panel">
+      <h2>Word list templates</h2>
+      <p class="hint" style="margin-top:0">Templates added here are offered to every room on its admin page. Rooms load one into their word list; they cannot change yours. Hiding a template takes it off every room's list without deleting it.</p>
+      <div class="row">
+        <div><label class="f" for="tName">Name</label><input class="t" id="tName" maxlength="40" placeholder="e.g. Horror games"></div>
+      </div>
+      <label class="f" for="tWords">Words, one per line (at least 24)</label>
+      <textarea class="t" id="tWords" rows="8" spellcheck="false" style="font:inherit;resize:vertical"></textarea>
+      <div class="actions"><button class="btn" id="tAdd" type="button">Add template</button></div>
+      <p class="msg" id="tMsg" role="status"></p>
+      <div class="tablewrap"><table class="rooms"><thead><tr><th>Template</th><th>Words</th><th>Status</th><th>Actions</th></tr></thead><tbody id="tRows"></tbody></table></div>
+      <p class="empty" id="tEmpty">No site templates yet.</p>
+    </section>
   </div>
 </div>
 <script>
@@ -103,7 +117,7 @@ const say = (id, text, ok) => { const m = $(id); m.textContent = text; m.classNa
 async function run(msgId, fn, okText) { try { const r = await fn(); say(msgId, okText || 'Done.', true); await refresh(); return r; } catch (e) { say(msgId, e.message, false); } }
 function showLogin(err) { clearInterval(timer); $('app').hidden = true; $('login').hidden = false; $('loginMsg').textContent = err || ''; }
 $('loginForm').onsubmit = async (e) => { e.preventDefault(); pw = $('pw').value; try { await refresh(); try { sessionStorage.setItem('bingoSitePw', pw); } catch {} start(); } catch {} };
-function start() { $('login').hidden = true; $('app').hidden = false; clearInterval(timer); timer = setInterval(() => refresh().catch(() => {}), 10000); }
+function start() { loadTemplates(); $('login').hidden = true; $('app').hidden = false; clearInterval(timer); timer = setInterval(() => refresh().catch(() => {}), 10000); }
 
 function ago(t) { if (!t) return 'never'; const s = (Date.now() - t) / 1000; if (s < 90) return 'just now'; if (s < 5400) return Math.round(s / 60) + ' min ago'; if (s < 129600) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' days ago'; }
 function showPw(name, password) { const o = $('pwOut'); o.hidden = false; o.replaceChildren(`New admin password for ${name}: `, el('code', { textContent: password }), ' (only shown now)'); }
@@ -149,6 +163,26 @@ $('nBtn').onclick = async () => {
 };
 $('sOpen').onchange = () => run('sMsg', () => api('settings', { openRooms: $('sOpen').checked }), 'Saved.');
 $('sSave').onclick = () => run('sMsg', () => api('settings', { maxRooms: $('sMax').value }), 'Saved.');
+
+// ---- site word list templates ----
+async function loadTemplates() {
+  try {
+    const { templates } = await api('templates');
+    const rows = $('tRows'); rows.replaceChildren();
+    for (const t of templates) {
+      const btn = (text, fn, cls = 'ghost') => { const b = el('button', { className: 'btn sm ' + cls, type: 'button', textContent: text }); b.onclick = fn; return b; };
+      rows.append(el('tr', {}, el('td', { textContent: t.name }), el('td', { textContent: t.count }), el('td', {}, el('span', { className: 'tag' + (t.hidden ? '' : ' live'), textContent: t.hidden ? 'hidden' : 'offered' })),
+        el('td', { className: 'acts' },
+          btn(t.hidden ? 'Offer again' : 'Hide', async () => { try { await api('templatehide', { id: t.id, hidden: !t.hidden }); say('tMsg', '', true); loadTemplates(); } catch (e) { say('tMsg', e.message); } }), ' ',
+          btn('Delete', async () => { try { await api('templatedelete', { id: t.id }); say('tMsg', `Deleted "${t.name}".`, true); loadTemplates(); } catch (e) { say('tMsg', e.message); } }, 'danger'))));
+    }
+    $('tEmpty').hidden = templates.length > 0;
+  } catch {}
+}
+$('tAdd').onclick = async () => {
+  try { await api('templateadd', { name: $('tName').value, phrases: $('tWords').value.split(/\r?\n/) }); say('tMsg', 'Template added. Every room can load it now.', true); $('tName').value = $('tWords').value = ''; loadTemplates(); }
+  catch (e) { say('tMsg', e.message); }
+};
 
 (async () => { if (!pw) return showLogin(); try { await refresh(); start(); } catch { showLogin(); } })();
 </script>

@@ -41,6 +41,19 @@ th { color:var(--muted); font-size:.75rem; text-transform:uppercase; letter-spac
 .words { display:flex; flex-direction:column; gap:4px; max-height:420px; overflow:auto; }
 .words button { text-align:left; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel2); color:var(--fg); cursor:pointer; font:inherit; }
 .words button.on { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+.words button .vc { float:right; font-size:.8rem; padding:1px 7px; border-radius:99px; background:var(--bg); color:var(--fg); border:1px solid var(--line); margin-left:8px; }
+.notice { border:1px solid var(--accent); border-radius:8px; padding:10px 12px; margin-top:10px; background:var(--panel2); }
+.notice .btns { margin-top:8px; }
+h3 { font-size:1rem; margin:18px 0 4px; }
+.themerow { display:flex; gap:12px; flex-wrap:wrap; }
+.themerow label { display:flex; flex-direction:column; gap:4px; margin:6px 0 0; }
+.themerow input[type=color] { width:64px; height:38px; padding:2px; border:1px solid var(--line); border-radius:7px; background:var(--bg); cursor:pointer; }
+.presets { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.presets button { display:flex; align-items:center; gap:6px; padding:5px 10px; border-radius:99px; border:1px solid var(--line); background:var(--panel2); color:var(--fg); cursor:pointer; font:inherit; font-size:.85rem; }
+.presets i { width:14px; height:14px; border-radius:50%; display:inline-block; border:1px solid rgba(255,255,255,.3); }
+.tprev { margin-top:12px; border-radius:8px; padding:12px; border:1px solid var(--line); }
+.tprev .tpanel { border-radius:6px; padding:10px; }
+.tprev .tbtn { display:inline-block; margin-top:8px; padding:4px 10px; border-radius:6px; font-weight:700; font-size:.85rem; }
 .words button i { font-style:normal; opacity:.65; display:inline-block; min-width:2.2em; font-variant-numeric:tabular-nums; }
 canvas { display:block; width:100%; max-width:340px; height:auto; border-radius:6px; margin-top:10px; background:var(--panel2); }
 details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
@@ -96,7 +109,12 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
         <section class="panel">
           <h2>Game</h2>
           <p id="gameLine">Loading</p>
+          <div class="notice" id="idleBox" hidden>
+            <span id="idleText"></span>
+            <div class="btns"><button class="btn" id="reopenBtn" type="button">Re-open this game</button></div>
+          </div>
           <div class="btns"><button class="btn" id="startBtn" type="button">Start new game</button><button class="btn danger" id="endBtn" type="button">End game</button></div>
+          <p class="hint" id="idleHint"></p>
           <p class="msg" id="gameMsg" role="status"></p>
         </section>
 
@@ -114,6 +132,15 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
           <textarea id="phrases" spellcheck="false"></textarea>
           <div class="btns"><button class="btn" id="savePhrases" type="button">Save word list</button></div>
           <p class="msg" id="phrasesMsg" role="status"></p>
+          <h3>Templates</h3>
+          <p class="hint" style="margin-top:0">Saved word lists: your own, and ones the site offers. Loading one fills the box above; press <b>Save word list</b> to use it.</p>
+          <label for="tplPick">Template</label>
+          <select id="tplPick"></select>
+          <div class="btns"><button class="btn ghost" id="tplLoad" type="button">Load into the list</button><button class="btn ghost" id="tplDel" type="button">Delete</button><button class="btn ghost" id="tplHide" type="button">Hide</button></div>
+          <div class="checks"><label><input type="checkbox" id="tplShowHidden"> Show site templates I hid</label></div>
+          <label for="tplName">Save the list above as a template</label>
+          <div class="pwfield"><input type="text" id="tplName" maxlength="40" placeholder="Template name"><button class="btn sm" id="tplSave" type="button">Save template</button></div>
+          <p class="msg" id="tplMsg" role="status"></p>
         </section>
 
         <section class="panel">
@@ -171,6 +198,21 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
         <section class="panel">
           <h2>Recent commands</h2>
           <table><tbody id="chatLog"></tbody></table>
+        </section>
+
+        <section class="panel">
+          <h2>Page colours</h2>
+          <p class="hint" style="margin-top:0">The colours of your room's page, for everyone who visits it. The card itself uses the colours under Card background.</p>
+          <div class="themerow">
+            <label>Background<input type="color" id="thBg"></label>
+            <label>Panels<input type="color" id="thPanel"></label>
+            <label>Accent<input type="color" id="thAccent"></label>
+            <label>Text<input type="color" id="thText"></label>
+          </div>
+          <div class="presets" id="thPresets"></div>
+          <div class="tprev" id="thPrev"><div class="tpanel" id="thPrevPanel"><b id="thPrevTitle">Find your card</b><div id="thPrevMuted" style="font-size:.85rem">Type your name exactly as it shows in chat.</div><span class="tbtn" id="thPrevBtn">Show my card</span></div></div>
+          <div class="btns"><button class="btn" id="thSave" type="button">Save colours</button><button class="btn ghost" id="thReset" type="button">Use the site's colours</button></div>
+          <p class="msg" id="thMsg" role="status"></p>
         </section>
 
         <section class="panel">
@@ -277,13 +319,22 @@ function render() {
   const g = D.game;
   $('gameLine').textContent = g.active ? `Game #${g.number} is live: ${g.players} players, ${g.called.length} of ${g.phrases.length} words called.` : (g.number ? `Game #${g.number} finished. Start a new one when you are ready.` : 'No game has been run yet.');
   $('startBtn').disabled = g.active; $('endBtn').disabled = !g.active;
+  $('idleBox').hidden = !(g.closedIdle && !g.active);
+  if (g.closedIdle && !g.active) {
+    $('idleText').textContent = `Game #${g.number} was closed at ${new Date(g.closedAt).toLocaleTimeString()} because nobody joined and no words were called for ${D.room.gameIdleMinutes} minutes. Re-open it to carry on with the same cards (${g.reopensLeft} of 3 re-opens left today).`;
+    $('reopenBtn').disabled = g.reopensLeft <= 0;
+    $('reopenBtn').textContent = g.reopensLeft > 0 ? `Re-open game #${g.number}` : 'No re-opens left today';
+  }
+  $('idleHint').textContent = D.room.gameIdleMinutes ? `A running game closes by itself after ${D.room.gameIdleMinutes} minutes with nobody joining and no words called.` : '';
+  const counts = g.viewCounts || {};
   const list = $('callList'); list.replaceChildren();
   if (!g.active) list.append(el('p', { className: 'hint', textContent: 'Start a game to call words.' }));
   const q = $('callFind').value.trim().toLowerCase();
   g.phrases.forEach((t, i) => {
     const n = i + 1, on = g.called.includes(n);
     if (q && !t.toLowerCase().includes(q) && String(n) !== q) return;
-    const b = el('button', { type: 'button', className: on ? 'on' : '' }, el('i', { textContent: n }), (on ? '✓ ' : '') + t);
+    const vc = !on && counts[n] ? el('span', { className: 'vc', title: 'Viewers who marked this on their own card', textContent: counts[n] + (counts[n] === 1 ? ' viewer' : ' viewers') }) : '';
+    const b = el('button', { type: 'button', className: on ? 'on' : '' }, el('i', { textContent: n }), (on ? '✓ ' : '') + t, vc);
     b.onclick = () => run('gameMsg', () => api(on ? 'unmark' : 'mark', { word: String(n) }), (on ? 'Un-called' : 'Called') + ' #' + n);
     list.append(b);
   });
@@ -306,7 +357,8 @@ function renderRoom() {
   const r = D.room;
   $('roomTag').textContent = r.name;
   $('roomLink').textContent = location.origin + ROOM_BASE;
-  $('roomChat').textContent = r.kind === 'dedicated' ? 'Chat stays connected all the time.'
+  $('roomChat').textContent = r.chatPaused ? `Chat was paused: about ${r.chatPaused.rate} chat lines a minute were coming in with no one joining or playing. Having this page open turns it back on.`
+    : r.kind === 'dedicated' ? 'Chat stays connected all the time.'
     : `Chat is ${r.chatAwake ? 'connected' : 'asleep'}. It stays connected while a game is running and for ${r.idleHours} hours after this page was last open, then sleeps until you open this page or start a game.`;
   $('roomListed').checked = r.listed;
   $('listedRow').hidden = r.kind === 'dedicated';
@@ -332,11 +384,78 @@ function showModPw() {
 
 async function refresh() {
   D = await api('status');
-  if (!formsFilled) { fillForms(D.settings); formsFilled = true; }
+  if (!formsFilled) { fillForms(D.settings); thSet(D.settings.theme && D.settings.theme.bg ? D.settings.theme : null); loadTemplates(); formsFilled = true; }
   render();
 }
 
 $('startBtn').onclick = () => run('gameMsg', () => api('start'), 'Game started.');
+$('reopenBtn').onclick = () => run('gameMsg', () => api('reopen'), 'Game re-opened with the same cards.');
+
+// ---- templates ----
+let TPL = { mine: [], site: [] };
+function renderTemplates() {
+  const sel = $('tplPick'), keep = sel.value; sel.replaceChildren();
+  const showHidden = $('tplShowHidden').checked;
+  const group = (label, items, source) => {
+    if (!items.length) return;
+    const g = el('optgroup', { label });
+    for (const t of items) g.append(el('option', { value: source + ':' + t.id, textContent: `${t.name} (${t.count} words)${t.hidden ? ' · hidden' : ''}` }));
+    sel.append(g);
+  };
+  group('Your templates', TPL.mine, 'room');
+  group('Site templates', TPL.site.filter((t) => showHidden || !t.hidden), 'site');
+  if (!sel.options.length) sel.append(el('option', { value: '', textContent: 'No templates yet' }));
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  syncTplButtons();
+}
+function picked() { const [source, id] = $('tplPick').value.split(':'); return id ? { source, id, t: (source === 'site' ? TPL.site : TPL.mine).find((x) => x.id === id) } : null; }
+function syncTplButtons() {
+  const p = picked();
+  $('tplLoad').disabled = !p; $('tplDel').hidden = !p || p.source !== 'room'; $('tplHide').hidden = !p || p.source !== 'site';
+  if (p && p.source === 'site') $('tplHide').textContent = p.t && p.t.hidden ? 'Unhide' : 'Hide';
+}
+async function loadTemplates() { try { TPL = await api('templates'); renderTemplates(); } catch {} }
+$('tplPick').onchange = syncTplButtons;
+$('tplShowHidden').onchange = renderTemplates;
+$('tplLoad').onclick = async () => {
+  const p = picked(); if (!p) return;
+  try { const r = await api('templateload', { source: p.source, id: p.id }); $('phrases').value = r.phrases.join('\n'); say('tplMsg', `Loaded "${r.name}" (${r.phrases.length} words) into the list. Press Save word list to use it.`, true); }
+  catch (e) { say('tplMsg', e.message); }
+};
+$('tplDel').onclick = async () => { const p = picked(); if (!p) return; try { await api('templatedelete', { id: p.id }); say('tplMsg', 'Template deleted.', true); await loadTemplates(); } catch (e) { say('tplMsg', e.message); } };
+$('tplHide').onclick = async () => { const p = picked(); if (!p || !p.t) return; try { await api('templatehide', { id: p.id, hidden: !p.t.hidden }); say('tplMsg', p.t.hidden ? 'Shown again.' : 'Hidden from your list. Tick "Show site templates I hid" to see it.', true); await loadTemplates(); } catch (e) { say('tplMsg', e.message); } };
+$('tplSave').onclick = async () => {
+  try { const r = await api('templatesave', { name: $('tplName').value, phrases: $('phrases').value.split(/\r?\n/) }); say('tplMsg', r.replaced ? 'Template updated.' : 'Template saved.', true); $('tplName').value = ''; await loadTemplates(); }
+  catch (e) { say('tplMsg', e.message); }
+};
+
+// ---- page colours ----
+const TH_DEFAULT = { bg: '#130f1f', panel: '#1d1830', accent: '#ff4d6d', text: '#f4f1fb' };
+const TH_PRESETS = [
+  ['Night (site)', null], ['Ocean', { bg: '#0b1726', panel: '#12263b', accent: '#3ec1ff', text: '#eaf6ff' }],
+  ['Forest', { bg: '#0f1a12', panel: '#18291c', accent: '#5be0a0', text: '#eefaf1' }], ['Sunset', { bg: '#1f0f14', panel: '#2e1720', accent: '#ff8a4c', text: '#fff1ea' }],
+  ['Grape', { bg: '#160f24', panel: '#241a3a', accent: '#c77dff', text: '#f5edff' }], ['Light', { bg: '#f4f2fa', panel: '#ffffff', accent: '#d6336c', text: '#1d1830' }],
+];
+const thInputs = { bg: 'thBg', panel: 'thPanel', accent: 'thAccent', text: 'thText' };
+function thSet(t) { for (const [k, id] of Object.entries(thInputs)) $(id).value = (t && t[k]) || TH_DEFAULT[k]; thPreview(); }
+function thPreview() {
+  const v = Object.fromEntries(Object.entries(thInputs).map(([k, id]) => [k, $(id).value]));
+  $('thPrev').style.background = v.bg; $('thPrevPanel').style.background = v.panel; $('thPrevTitle').style.color = v.text;
+  $('thPrevMuted').style.color = `color-mix(in srgb, ${v.text} 62%, ${v.bg})`;
+  $('thPrevBtn').style.background = v.accent;
+  const n = parseInt(v.accent.slice(1), 16), l = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  $('thPrevBtn').style.color = l > 0.6 ? '#111' : '#fff';
+}
+for (const id of Object.values(thInputs)) $(id).addEventListener('input', thPreview);
+for (const [label, t] of TH_PRESETS) {
+  const sw = (t || TH_DEFAULT);
+  const b = el('button', { type: 'button' }, el('i'), el('i'), label);
+  b.children[0].style.background = sw.bg; b.children[1].style.background = sw.accent;
+  b.onclick = () => thSet(t || TH_DEFAULT);
+  $('thPresets').append(b);
+}
+$('thSave').onclick = () => run('thMsg', () => api('settings', { theme: Object.fromEntries(Object.entries(thInputs).map(([k, id]) => [k, $(id).value])) }), 'Saved. Your room page uses these colours now.');
+$('thReset').onclick = () => run('thMsg', async () => { const r = await api('settings', { theme: { bg: '', panel: '', accent: '', text: '' } }); thSet(null); return r; }, "Saved. Your room page uses the site's colours again.");
 $('endBtn').onclick = () => run('gameMsg', () => api('end'), 'Game ended.');
 $('savePhrases').onclick = () => run('phrasesMsg', () => api('phrases', { phrases: $('phrases').value.split(/\r?\n/) }), 'Word list saved. It applies to the next game.');
 $('simBtn').onclick = async () => {

@@ -11,7 +11,9 @@ function renderState() {
   $('title').textContent = S.title;
   const g = S.game, pill = $('status');
   pill.classList.toggle('live', g.active);
-  $('statusText').textContent = g.active ? `Game #${g.number} live · ${g.players} players · ${g.called.length}/${g.total} called` : (g.number ? `Game #${g.number} finished` : 'No game running');
+  $('statusText').textContent = g.active ? `Game #${g.number} live · ${g.players} players · ${g.called.length}/${g.total} called`
+    : g.closedIdle ? `Game #${g.number} paused (no activity)` : (g.number ? `Game #${g.number} finished` : 'No game running');
+  applyTheme(S.theme);
 
   const called = $('called'); called.replaceChildren();
   for (const c of g.called) called.append(el('span', { className: 'chip' }, el('i', { textContent: c.n }), c.text));
@@ -96,48 +98,48 @@ async function renderCard() {
   drawCard();
 }
 
-// ---- viewer marks: a color dab per square, kept in this browser only and never sent anywhere ----
-const DAB_COLORS = ['#ffd23f', '#3ec1ff', '#5be0a0', '#c77dff', '#ff8fab'];
-let dabColor = DAB_COLORS[0], cur = null;
-try { const c = localStorage.getItem('bingoDabColor'); if (DAB_COLORS.includes(c)) dabColor = c; } catch {}
+// ---- viewer marks: a viewer taps a square and it fills in exactly like a called word. Only this viewer sees it,
+// and it never counts toward a bingo; it is also sent to the server so the admin can see what viewers think happened ----
+let cur = null;
 const memMarks = new Map();   // used as-is when the browser blocks storage
 const cardOpts = () => (S && S.cards) || { clickToMark: false, autoMark: true };
 const ROOM = location.pathname.split('/')[1] || '';
-const marksKey = (m) => `bingoMarks:${ROOM}:${m.gameNumber}:${m.platform}:${String(m.name).toLowerCase()}`;
-function getMarks(m) {
+const marksKey = (m) => `bingoMarks2:${ROOM}:${m.gameNumber}:${m.platform}:${String(m.name).toLowerCase()}`;
+function getMarks(m) {   // a Set of square positions (0-24)
   const k = marksKey(m);
   if (memMarks.has(k)) return memMarks.get(k);
-  const o = {};
-  try {
-    const raw = JSON.parse(localStorage.getItem(k) || '{}');
-    for (const [i, c] of Object.entries(raw || {})) if (/^\d+$/.test(i) && +i < 25 && DAB_COLORS.includes(c)) o[i] = c;
-  } catch {}
-  memMarks.set(k, o); return o;
+  const set = new Set();
+  try { for (const i of JSON.parse(localStorage.getItem(k) || '[]')) if (Number.isInteger(i) && i >= 0 && i < 25) set.add(i); } catch {}
+  memMarks.set(k, set); return set;
 }
-function putMarks(m, o) {
-  const k = marksKey(m); memMarks.set(k, o);
+function putMarks(m, set) {
+  const k = marksKey(m); memMarks.set(k, set);
   try {
-    // forget marks from older games so storage does not pile up
+    // forget marks from older games, and the older formats, so storage does not pile up
     for (let n = localStorage.length - 1; n >= 0; n--) {
       const key = localStorage.key(n);
-      if (!key || !key.startsWith('bingoMarks:')) continue;
+      if (!key) continue;
+      if (key.startsWith('bingoMarks:') || key === 'bingoDabColor') { localStorage.removeItem(key); continue; }
       const part = key.split(':');
-      // older games in this room, or keys in the format from before rooms
-      if (/^\d+$/.test(part[1]) || (part[1] === ROOM && +part[2] < m.gameNumber)) localStorage.removeItem(key);
+      if (part[0] === 'bingoMarks2' && part[1] === ROOM && +part[2] < m.gameNumber) localStorage.removeItem(key);
     }
-    if (Object.keys(o).length) localStorage.setItem(k, JSON.stringify(o)); else localStorage.removeItem(k);
+    if (set.size) localStorage.setItem(k, JSON.stringify([...set])); else localStorage.removeItem(k);
   } catch {}
+}
+function tellServer(m, body) {
+  fetch('api/viewmark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: m.name, platform: m.platform, ...body }) }).catch(() => {});
 }
 
 function drawCard() {
   if (!cur || !S) return;
-  const { m, bg } = cur, opt = cardOpts(), marks = opt.clickToMark ? getMarks(m) : {};
-  const view = { ...m, cells: m.cells.map((c, i) => ({ ...c, marked: opt.autoMark ? c.marked : !!c.free, early: opt.autoMark ? c.early : false, dab: marks[i] || null })) };
+  const { m, bg } = cur, opt = cardOpts(), mine = opt.clickToMark ? getMarks(m) : new Set();
+  // the viewer's own marks look exactly like called words
+  const view = { ...m, cells: m.cells.map((c, i) => ({ ...c, marked: (opt.autoMark ? c.marked : !!c.free) || mine.has(i), early: opt.autoMark && !mine.has(i) ? c.early : false })) };
   BingoCard.draw($('card'), view, S.layout, bg, S.title);
-  $('card').classList.toggle('dabbable', opt.clickToMark);
+  $('card').classList.toggle('dabbable', opt.clickToMark && m.active);
   $('dabBar').hidden = !opt.clickToMark; $('dabHint').hidden = !opt.clickToMark;
-  $('dabLbl').textContent = opt.autoMark ? 'Tap a square to mark it' : 'Called words are not filled in. Tap squares to mark them';
-  $('dabHint').textContent = 'Your marks are only saved on this device. Bingos are still decided by the words that get called' + (opt.autoMark ? '.' : ', not by your marks.');
+  $('dabLbl').textContent = opt.autoMark ? 'Tap a square to mark it yourself' : 'Called words are not filled in. Tap squares to mark them';
+  $('dabHint').textContent = 'Your own marks only show on this device. Bingos are decided by the words that get called' + (opt.autoMark ? '.' : ', not by your marks.');
   const stats = $('stats'); stats.replaceChildren();
   const add = (label, val) => stats.append(el('span', {}, label + ' ', el('b', { textContent: val })));
   add('Game', '#' + m.gameNumber + (m.active ? '' : ' (finished)'));
@@ -146,31 +148,39 @@ function drawCard() {
     if (!m.bingo && m.needed > 0) add('Closest line needs', m.needed + ' more');
     if (m.early) add('Called before you joined (dashed, not counted)', m.early);
   }
-  if (opt.clickToMark) add('Your marks', Object.keys(marks).length);
+  if (opt.clickToMark) add('Your marks', mine.size);
   if (m.wager) add('Wager', m.wager + ' ' + S.currency);
   if (m.points != null) add('Balance', m.points + ' ' + S.currency);
   if (m.bingo) stats.append(el('span', { className: m.blackout ? 'badge black' : 'badge', textContent: m.blackout ? 'BLACKOUT' : 'BINGO' }));
 }
 
-function renderSwatches() {
-  const box = $('swatches'); box.replaceChildren();
-  DAB_COLORS.forEach((c, n) => {
-    const b = el('button', { type: 'button', title: 'Marker color ' + (n + 1) });
-    b.style.background = c; b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(c === dabColor)); b.setAttribute('aria-label', 'Marker color ' + (n + 1));
-    b.onclick = () => { dabColor = c; try { localStorage.setItem('bingoDabColor', c); } catch {} renderSwatches(); };
-    box.append(b);
-  });
-}
-renderSwatches();
 $('card').addEventListener('click', (e) => {
-  if (!cur || !cardOpts().clickToMark) return;
+  if (!cur || !cardOpts().clickToMark || !cur.m.active) return;
   const i = BingoCard.cellAt($('card'), S.layout, e.clientX, e.clientY);
-  if (i < 0 || cur.m.cells[i].free) return;
-  const o = { ...getMarks(cur.m) };
-  if (o[i] === dabColor) delete o[i]; else o[i] = dabColor;   // same color clears, another color repaints
-  putMarks(cur.m, o); drawCard();
+  const cell = i >= 0 && cur.m.cells[i];
+  if (!cell || cell.free) return;
+  if (cardOpts().autoMark && cell.marked) return;   // already called: nothing to add
+  const set = new Set(getMarks(cur.m)), on = !set.has(i);
+  if (on) set.add(i); else set.delete(i);
+  putMarks(cur.m, set); drawCard();
+  tellServer(cur.m, { n: cell.n, on });
 });
-$('dabClear').onclick = () => { if (cur) { putMarks(cur.m, {}); drawCard(); } };
+$('dabClear').onclick = () => { if (cur) { putMarks(cur.m, new Set()); drawCard(); tellServer(cur.m, { clear: true }); } };
+
+// ---- the room's own page colours (set on its admin page) ----
+function applyTheme(t) {
+  const r = document.documentElement.style, hex = /^#[0-9a-f]{6}$/i;
+  const set = (k, v) => (v ? r.setProperty(k, v) : r.removeProperty(k));
+  t = t || {};
+  const lum = (h) => { const n = parseInt(h.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+  const bg = hex.test(t.bg) ? t.bg : '', panel = hex.test(t.panel) ? t.panel : '', text = hex.test(t.text) ? t.text : '', accent = hex.test(t.accent) ? t.accent : '';
+  set('--bg', bg); set('--panel', panel); set('--fg', text); set('--accent', accent);
+  set('--panel2', panel ? `color-mix(in srgb, ${panel} 88%, ${text || '#ffffff'})` : '');
+  set('--line', panel ? `color-mix(in srgb, ${panel} 72%, ${text || '#ffffff'})` : '');
+  set('--muted', text ? `color-mix(in srgb, ${text} 62%, ${bg || panel || '#130f1f'})` : '');
+  set('--accent-fg', accent ? (lum(accent) > 0.35 ? '#111111' : '#ffffff') : '');
+  document.documentElement.style.colorScheme = bg && lum(bg) > 0.5 ? 'light' : '';
+}
 
 async function loadState() { try { S = await (await fetch('api/state')).json(); renderState(); } catch {} }
 async function loadCard(prefer) {
