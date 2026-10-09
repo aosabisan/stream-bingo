@@ -41,7 +41,7 @@ footer { margin-top: 48px; color: var(--muted); font-size: .88rem; border-top: 1
   <p class="lead">Free chat bingo for streamers. Viewers type <code>!enter</code> in chat to get a card, your mods call the words, and everyone follows their card fill in on a web page. Works with Twitch, Kick, YouTube and Rumble chat.</p>
 
   <div class="cta">
-    <a class="btn" id="dl" href="stream-bingo-v1.2.0.zip" download>Download v1.2.0 (zip, 57 KB)</a>
+    <a class="btn" id="dl" href="stream-bingo-v2.1.2.zip" download>Download v2.1.2 (zip, 93 KB)</a>
     <a class="btn ghost" href="https://github.com/aosabisan/stream-bingo">View the code on GitHub</a>
   </div>
   <p class="small">A zip file with everything in it. No installer and no extra packages. You only need <a href="https://nodejs.org/">Node.js</a> 22.4 or newer.</p>
@@ -49,11 +49,13 @@ footer { margin-top: 48px; color: var(--muted); font-size: .88rem; border-top: 1
   <h2>What it does</h2>
   <div class="grid">
     <div class="card"><h3>Reads four chats at once</h3><p>Twitch, Kick, YouTube and Rumble. No bot account or API keys needed.</p></div>
-    <div class="card"><h3>Cards on a web page</h3><p>Viewers search their name to see their card fill in live, and can save it as an image. Optionally they can tap squares to dab their own card, or mark it all themselves.</p></div>
+    <div class="card"><h3>Cards on a web page</h3><p>Viewers search their name to see their card fill in live, and can save it as an image. Optionally they can tap squares to mark their own card, and mods see which words viewers think happened.</p></div>
     <div class="card"><h3>Points and wagers</h3><p>Bingos and blackouts pay out. Viewers can wager with <code>!enter 50</code>. Weekly and all-time leaderboards.</p></div>
     <div class="card"><h3>Mods call the words</h3><p>With <code>!mark</code> in chat, or on a mod page with its own password that can only call words.</p></div>
     <div class="card"><h3>Admin page</h3><p>Start and end games, edit the word list, upload a card background, set payouts, and test commands without going live.</p></div>
-    <div class="card"><h3>Your own look</h3><p>Rename the game, pick colours and upload your own card background.</p></div>
+    <div class="card"><h3>Your own look</h3><p>Rename the game, pick page and card colours, and upload your own card background.</p></div>
+    <div class="card"><h3>Rooms for many streamers</h3><p>One site hosts a room per streamer, each with its own game, passwords and leaderboards. Anyone can make one, or the site owner adds featured rooms.</p></div>
+    <div class="card"><h3>Word list templates</h3><p>Save word lists to reuse, and offer ready-made lists to every room from the site admin page.</p></div>
   </div>
 
   <h2>Get it running</h2>
@@ -61,10 +63,10 @@ footer { margin-top: 48px; color: var(--muted); font-size: .88rem; border-top: 1
     <li>Install <a href="https://nodejs.org/">Node.js</a> 22.4 or newer.</li>
     <li>Download the zip above and unzip it.</li>
     <li>Double-click <code>start.bat</code> on Windows, or run <code>node server.js</code>.</li>
-    <li>Open <code>http://localhost:3000/admin</code>. The admin password is printed in the window the first time.</li>
-    <li>Set your chat channels and word list on the admin page, then press <b>Start new game</b>.</li>
+    <li>Open <code>http://localhost:3000</code> and make a room. Its admin password is shown once, so save it. (The site owner's page is <code>/site-admin</code>; its password is printed in the window the first time.)</li>
+    <li>On your room's admin page, set your chat channels and word list, then press <b>Start new game</b>.</li>
   </ol>
-  <p class="small">The download comes with a sample word list and channel set up. Change them on the admin page before your first stream. To put it online for your viewers, see "Putting it on the internet" in the included README.</p>
+  <p class="small">New rooms start with a general word list and no channels set. To put it online for your viewers, see "Putting it on the internet" in the included README.</p>
 
   <footer>Stream Bingo. Kick, YouTube and Rumble chat are read through the same feeds their own websites use, which those sites can change without notice.</footer>
 </main>
