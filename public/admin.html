@@ -196,11 +196,6 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
         </section>
 
         <section class="panel">
-          <h2>Recent commands</h2>
-          <table><tbody id="chatLog"></tbody></table>
-        </section>
-
-        <section class="panel">
           <h2>Page colours</h2>
           <p class="hint" style="margin-top:0">The colours of your room's page, for everyone who visits it. The card itself uses the colours under Card background.</p>
           <div class="themerow">
@@ -256,7 +251,7 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
           <div class="checks"><label><input type="checkbox" id="pEarly"> Words called before someone joins count on their card (a late joiner can win right away)</label></div>
           <div class="checks"><label><input type="checkbox" id="pClick"> Viewers can click squares to mark their card</label></div>
           <div class="checks sub"><label id="pManualLbl"><input type="checkbox" id="pManual"> Don't auto-mark cards on the page (viewers mark their own squares)</label></div>
-          <p class="hint">Viewer marks are only a color change in that viewer's own browser. Points, bingos and blackouts are still worked out by the server from the words that get called. These two apply right away.</p>
+          <p class="hint">A viewer's own marks fill in squares only on their screen and never count toward a bingo: points, bingos and blackouts are still worked out from the words that get called. The call list shows how many viewers marked each word. These two apply right away.</p>
           <div class="btns"><button class="btn" id="savePoints" type="button">Save</button></div>
           <p class="msg" id="pMsg" role="status"></p>
           <h2 style="margin-top:20px">Give or take points</h2>
@@ -266,6 +261,10 @@ details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
         </section>
       </div>
     </div>
+    <section class="panel" style="margin-top:18px">
+      <h2>Recent commands</h2>
+      <table><tbody id="chatLog"></tbody></table>
+    </section>
   </div>
 </div>
 <script src="/card.js"></script>
