@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="icon" href="data:,">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Stream Bingo Admin</title>
+<style>
+:root { --bg:#130f1f; --panel:#1d1830; --panel2:#262040; --line:#373057; --fg:#f4f1fb; --muted:#a8a0c4; --accent:#ff4d6d; --accent-fg:#1a0a10; --ok:#5be0a0; --warn:#ffc857; --bad:#ff7a7a;
+  --display: Impact, "Arial Narrow Bold", system-ui, sans-serif; --body: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 var(--body); }
+:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+.wrap { max-width:1100px; margin:0 auto; padding:20px 16px 60px; }
+h1 { font:400 2.2rem/1 var(--display); text-transform:uppercase; margin:0; }
+h2 { font:400 1.15rem/1.2 var(--display); letter-spacing:.04em; text-transform:uppercase; margin:0 0 12px; }
+header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+a { color:var(--accent); }
+code { background:var(--panel2); padding:1px 6px; border-radius:4px; font-size:.9em; }
+.cols { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:18px; align-items:start; }
+@media (max-width:860px){ .cols { grid-template-columns:minmax(0,1fr); } }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; min-width:0; margin-bottom:18px; }
+label { display:block; font-size:.85rem; color:var(--muted); margin:10px 0 4px; }
+input[type=text], input[type=number], input[type=password], textarea, select { width:100%; padding:9px 11px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:7px; font:inherit; }
+textarea { min-height:260px; resize:vertical; font-family:ui-monospace, Consolas, monospace; font-size:.9rem; }
+.row { display:flex; gap:10px; flex-wrap:wrap; align-items:end; }
+.row > * { flex:1 1 120px; min-width:0; }
+.btn { padding:9px 16px; border:0; border-radius:7px; background:var(--accent); color:var(--accent-fg); font-weight:700; cursor:pointer; font:inherit; font-weight:700; }
+.btn.ghost { background:var(--panel2); color:var(--fg); border:1px solid var(--line); font-weight:600; }
+.btn.danger { background:var(--bad); }
+.btns { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+.msg { margin-top:10px; min-height:1.4em; color:var(--muted); }
+.msg.ok { color:var(--ok); } .msg.err { color:var(--bad); }
+.hint { color:var(--muted); font-size:.85rem; margin:6px 0 0; }
+table { width:100%; border-collapse:collapse; }
+td,th { padding:6px 8px 6px 0; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; overflow-wrap:anywhere; }
+#chatTable td:first-child, #chatTable th:first-child { white-space:nowrap; }
+th { color:var(--muted); font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; }
+.st { font-weight:700; } .st.connected { color:var(--ok); } .st.error { color:var(--bad); } .st.connecting, .st.reconnecting, .st.waiting { color:var(--warn); } .st.off { color:var(--muted); }
+.words { display:flex; flex-direction:column; gap:4px; max-height:420px; overflow:auto; }
+.words button { text-align:left; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel2); color:var(--fg); cursor:pointer; font:inherit; }
+.words button.on { background:var(--accent); color:var(--accent-fg); border-color:var(--accent); font-weight:600; }
+.words button .vc { float:right; font-size:.8rem; padding:1px 7px; border-radius:99px; background:var(--bg); color:var(--fg); border:1px solid var(--line); margin-left:8px; }
+.notice { border:1px solid var(--accent); border-radius:8px; padding:10px 12px; margin-top:10px; background:var(--panel2); }
+.notice .btns { margin-top:8px; }
+h3 { font-size:1rem; margin:18px 0 4px; }
+.themerow { display:flex; gap:12px; flex-wrap:wrap; }
+.themerow label { display:flex; flex-direction:column; gap:4px; margin:6px 0 0; }
+.themerow input[type=color] { width:64px; height:38px; padding:2px; border:1px solid var(--line); border-radius:7px; background:var(--bg); cursor:pointer; }
+.presets { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.presets button { display:flex; align-items:center; gap:6px; padding:5px 10px; border-radius:99px; border:1px solid var(--line); background:var(--panel2); color:var(--fg); cursor:pointer; font:inherit; font-size:.85rem; }
+.presets i { width:14px; height:14px; border-radius:50%; display:inline-block; border:1px solid rgba(255,255,255,.3); }
+.tprev { margin-top:12px; border-radius:8px; padding:12px; border:1px solid var(--line); }
+.tprev .tpanel { border-radius:6px; padding:10px; }
+.tprev .tbtn { display:inline-block; margin-top:8px; padding:4px 10px; border-radius:6px; font-weight:700; font-size:.85rem; }
+.words button i { font-style:normal; opacity:.65; display:inline-block; min-width:2.2em; font-variant-numeric:tabular-nums; }
+canvas { display:block; width:100%; max-width:340px; height:auto; border-radius:6px; margin-top:10px; background:var(--panel2); }
+details summary { cursor:pointer; color:var(--muted); margin-top:12px; }
+.checks { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; }
+.checks label { display:flex; gap:6px; align-items:center; margin:0; color:var(--fg); }
+.checks input { width:auto; }
+.checks.sub { margin-left:26px; }
+table.mods td, table.modlog td { font-size:.9rem; vertical-align:middle; }
+table.mods td.n, table.mods th.n { text-align:right; font-variant-numeric:tabular-nums; }
+table.mods td.acts { text-align:right; white-space:nowrap; }
+table.mods td.acts .btn { margin-left:4px; }
+.newpw { border:1px solid var(--ok); border-radius:8px; padding:10px 12px; margin-top:10px; background:var(--panel2); overflow-wrap:anywhere; }
+.newpw code { font-size:1rem; }
+.logwrap { max-height:420px; overflow:auto; }
+table.modlog td:first-child { white-space:nowrap; color:var(--muted); }
+.checks label.off { color:var(--muted); }
+#login { max-width:380px; margin:12vh auto; }
+.secret { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:10px 0 0; }
+.secret code { font-size:1rem; letter-spacing:.06em; padding:5px 10px; min-width:9ch; user-select:all; }
+.secret code.masked { letter-spacing:.2em; user-select:none; color:var(--muted); }
+.btn.sm { padding:6px 12px; font-size:.88rem; }
+.roomtag { font:600 .95rem/1 var(--body, system-ui); text-transform:none; color:var(--muted); margin-left:8px; letter-spacing:0; }
+.pwfield { display:flex; gap:8px; } .pwfield input { flex:1 1 auto; } .pwfield .btn { flex:0 0 auto; }
+.headlinks { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+.support { font-size:.8rem; color:var(--muted); text-align:center; margin:24px 0 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="login" class="panel" hidden>
+    <h2>Admin login</h2>
+    <form id="loginForm">
+      <label for="pw">Password</label>
+      <input type="password" id="pw" autocomplete="current-password">
+      <div class="btns"><button class="btn" type="submit">Log in</button></div>
+      <p class="msg err" id="loginMsg" role="alert"></p>
+      <p class="hint">Use the room password you were shown when this room was made. The site owner's password works too.</p>
+    </form>
+  </div>
+
+  <div id="app" hidden>
+    <header><h1>Bingo admin <span class="roomtag" id="roomTag"></span></h1><div class="headlinks"><a href="./" target="_blank" rel="noopener">View the public page</a><a href="mod" target="_blank" rel="noopener">Mod page</a><button class="btn ghost sm" id="logoutBtn" type="button">Log out</button></div></header>
+    <div class="cols">
+      <div>
+        <section class="panel">
+          <h2>Your room</h2>
+          <p class="hint" style="margin-top:0">Viewers find their cards at <b id="roomLink"></b>. Share that link in chat.</p>
+          <p class="hint" id="roomChat"></p>
+          <div class="checks" id="listedRow"><label><input type="checkbox" id="roomListed"> Show this room on the home page while a game is live</label></div>
+          <p class="hint" id="roomKind"></p>
+          <label for="adminPwNew" style="margin-top:14px">Change this page's password (at least 8 characters)</label>
+          <div class="pwfield"><input type="password" id="adminPwNew" autocomplete="new-password" spellcheck="false" minlength="8"><button class="btn ghost sm" id="adminPwShow" type="button" aria-pressed="false" aria-controls="adminPwNew">Show</button><button class="btn sm" id="adminPwBtn" type="button">Change</button></div>
+          <p class="msg" id="roomMsg" role="status"></p>
+        </section>
+        <section class="panel">
+          <h2>Page name</h2>
+          <label for="pTitle">Name shown at the top of the page, in the browser tab and on every card</label>
+          <div class="row"><div><input type="text" id="pTitle" maxlength="40" placeholder="Stream Bingo"></div><button class="btn" id="saveTitle" type="button" style="flex:0 0 auto">Save name</button></div>
+          <p class="msg" id="titleMsg" role="status"></p>
+        </section>
+
+        <section class="panel">
+          <h2>Game</h2>
+          <p id="gameLine">Loading</p>
+          <div class="notice" id="idleBox" hidden>
+            <span id="idleText"></span>
+            <div class="btns"><button class="btn" id="reopenBtn" type="button">Re-open this game</button></div>
+          </div>
+          <div class="btns"><button class="btn" id="startBtn" type="button">Start new game</button><button class="btn danger" id="endBtn" type="button">End game</button></div>
+          <p class="hint" id="idleHint"></p>
+          <p class="msg" id="gameMsg" role="status"></p>
+        </section>
+
+        <section class="panel">
+          <h2>Call words</h2>
+          <p class="hint" id="callHint">Click a word to call it. Click again to undo. Winners are paid out automatically.</p>
+          <label for="callFind">Find a word</label>
+          <input type="text" id="callFind" placeholder="Type to filter the list, or a number" autocomplete="off" style="margin-bottom:10px">
+          <div class="words" id="callList"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Word list</h2>
+          <label for="phrases">One word or phrase per line (at least 24). Changes apply to the next game.</label>
+          <textarea id="phrases" spellcheck="false"></textarea>
+          <div class="btns"><button class="btn" id="savePhrases" type="button">Save word list</button></div>
+          <p class="msg" id="phrasesMsg" role="status"></p>
+          <h3>Templates</h3>
+          <p class="hint" style="margin-top:0">Saved word lists: your own, and ones the site offers. Loading one fills the box above; press <b>Save word list</b> to use it.</p>
+          <label for="tplPick">Template</label>
+          <select id="tplPick"></select>
+          <div class="btns"><button class="btn ghost" id="tplLoad" type="button">Load into the list</button><button class="btn ghost" id="tplDel" type="button">Delete</button><button class="btn ghost" id="tplHide" type="button">Hide</button></div>
+          <div class="checks"><label><input type="checkbox" id="tplShowHidden"> Show site templates I hid</label></div>
+          <label for="tplName">Save the list above as a template</label>
+          <div class="pwfield"><input type="text" id="tplName" maxlength="40" placeholder="Template name"><button class="btn sm" id="tplSave" type="button">Save template</button></div>
+          <p class="msg" id="tplMsg" role="status"></p>
+        </section>
+
+        <section class="panel">
+          <h2>Test chat</h2>
+          <p class="hint">Pretend to be someone in chat to check the rules without going live.</p>
+          <div class="row">
+            <div><label for="simName">Name</label><input type="text" id="simName" value="tester1"></div>
+            <div><label for="simPlat">Platform</label><select id="simPlat"><option>twitch</option><option>kick</option><option>youtube</option><option>rumble</option></select></div>
+          </div>
+          <label for="simText">Message</label><input type="text" id="simText" value="!enter 20">
+          <div class="checks"><label><input type="checkbox" id="simMod"> Moderator</label><label><input type="checkbox" id="simVip"> VIP</label><label><input type="checkbox" id="simOwner"> Streamer</label></div>
+          <div class="btns"><button class="btn ghost" id="simBtn" type="button">Send</button></div>
+          <p class="msg" id="simMsg" role="status"></p>
+        </section>
+      </div>
+
+      <div>
+        <section class="panel">
+          <h2>Chat channels</h2>
+          <div class="row">
+            <div><label for="chTwitch">Twitch channel</label><input type="text" id="chTwitch"></div>
+            <div><label for="chKick">Kick channel</label><input type="text" id="chKick"></div>
+          </div>
+          <label for="chYoutube">YouTube channel (@handle, channel id, or live video link)</label><input type="text" id="chYoutube">
+          <label for="chRumble">Rumble live video link (or chat id)</label><input type="text" id="chRumble">
+          <details><summary>Advanced Kick settings</summary>
+            <label for="chKickRoom">Kick chat room ID (only if the automatic lookup is blocked)</label><input type="text" id="chKickRoom">
+          </details>
+          <div class="btns"><button class="btn" id="saveChannels" type="button">Save and reconnect</button></div>
+          <p class="msg" id="chMsg" role="status"></p>
+          <table><thead><tr><th>Chat</th><th>Status</th><th>Seen</th></tr></thead><tbody id="chatTable"></tbody></table>
+          <p class="hint">Leave a box empty to skip that site. Chat is read only; the site never posts in chat.</p>
+        </section>
+
+        <section class="panel">
+          <h2>Chat commands</h2>
+          <p class="hint">What people type in chat. Each one starts with <code>!</code> and has no spaces. Changes apply right away, and the viewers' page shows the new words.</p>
+          <div class="row">
+            <div><label for="cmdEnter">Get a card (everyone)</label><input type="text" id="cmdEnter" maxlength="21" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="!enter"></div>
+            <div><label for="cmdStart">Start a game (you and chat mods)</label><input type="text" id="cmdStart" maxlength="21" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="!start"></div>
+          </div>
+          <div class="btns"><button class="btn" id="cmdSave" type="button">Save commands</button><button class="btn ghost" id="cmdDefault" type="button">Use !enter and !start</button></div>
+          <p class="msg" id="cmdMsg" role="status"></p>
+          <p class="hint">Starting a game from chat works for you (the streamer) and chat moderators, and shows under Mod activity. <code>!bingostart</code> and <code>!bingoend</code> also still work for them.</p>
+        </section>
+
+        <section class="panel">
+          <h2>Who can call words</h2>
+          <p class="hint">Controls the <code>!mark</code> and <code>!unmark</code> chat commands. You, the streamer, can always call words.</p>
+          <div class="checks"><label><input type="checkbox" id="allowMods"> Chat moderators</label><label><input type="checkbox" id="allowVips"> Chat VIPs</label></div>
+          <p class="msg" id="whoMsg" role="status"></p>
+          <h2 style="margin-top:20px">Mod logins</h2>
+          <p class="hint">Give each mod their own login so you can see who called what (under Mod activity at the bottom of this page). Mods use the link <b id="modLink"></b>. The mod page can only call and un-call words.</p>
+          <table class="mods"><thead><tr><th>Mod</th><th>Last used</th><th class="n">Calls</th><th></th></tr></thead><tbody id="modRows"></tbody></table>
+          <p class="hint" id="modNone">No mod logins yet.</p>
+          <label for="modName">Add a mod (their chat name works well)</label>
+          <div class="pwfield"><input type="text" id="modName" maxlength="30" autocomplete="off" spellcheck="false"><button class="btn sm" id="modAdd" type="button">Add mod</button></div>
+          <div class="newpw" id="modNew" hidden></div>
+          <p class="msg" id="modMsg" role="status"></p>
+          <h3>Shared mod password</h3>
+          <div class="checks"><label><input type="checkbox" id="sharedMod"> Allow one shared password for all mods (calls show as "shared mod login")</label></div>
+          <div id="sharedBox">
+          <div class="secret">
+            <span>Password:</span>
+            <code id="modPwShown" class="masked" aria-live="polite">••••••••</code>
+            <button class="btn ghost sm" id="modPwToggle" type="button" aria-pressed="false" aria-controls="modPwShown">Show</button>
+            <button class="btn ghost sm" id="modPwCopy" type="button">Copy</button>
+          </div>
+          <label for="modPwNew">New password (leave empty for a random one)</label>
+          <div class="pwfield"><input type="password" id="modPwNew" autocomplete="new-password" spellcheck="false"><button class="btn ghost sm" id="modPwNewToggle" type="button" aria-pressed="false" aria-controls="modPwNew">Show</button></div>
+          <div class="btns"><button class="btn ghost" id="modPwBtn" type="button">Change shared password</button></div>
+          </div>
+          <p class="msg" id="modPwMsg" role="status"></p>
+        </section>
+
+        <section class="panel">
+          <h2>Page colours</h2>
+          <p class="hint" style="margin-top:0">The colours of your room's page, for everyone who visits it. The card itself uses the colours under Card background.</p>
+          <div class="themerow">
+            <label>Background<input type="color" id="thBg"></label>
+            <label>Panels<input type="color" id="thPanel"></label>
+            <label>Accent<input type="color" id="thAccent"></label>
+            <label>Text<input type="color" id="thText"></label>
+          </div>
+          <div class="presets" id="thPresets"></div>
+          <div class="tprev" id="thPrev"><div class="tpanel" id="thPrevPanel"><b id="thPrevTitle">Find your card</b><div id="thPrevMuted" style="font-size:.85rem">Type your name exactly as it shows in chat.</div><span class="tbtn" id="thPrevBtn">Show my card</span></div></div>
+          <div class="btns"><button class="btn" id="thSave" type="button">Save colours</button><button class="btn ghost" id="thReset" type="button">Use the site's colours</button></div>
+          <p class="msg" id="thMsg" role="status"></p>
+        </section>
+
+        <section class="panel">
+          <h2>Card background</h2>
+          <div id="bgColorBox">
+            <div class="themerow"><label>Card background colour<input type="color" id="bgColor"></label></div>
+            <div class="btns"><button class="btn" id="bgColorSave" type="button">Save colour</button><button class="btn ghost" id="bgColorReset" type="button">Use the default</button></div>
+          </div>
+          <div id="bgImageBox" hidden>
+            <label for="bgFile" style="margin-top:14px">Background image (featured rooms). Any size: it is shrunk to fit the card before uploading.</label>
+            <input type="file" id="bgFile" accept="image/png,image/jpeg,image/webp">
+            <div class="btns"><button class="btn" id="bgUpload" type="button">Upload background</button><button class="btn ghost" id="bgRemove" type="button">Remove image</button></div>
+          </div>
+          <p class="hint" id="bgNote"></p>
+          <p class="msg" id="bgMsg" role="status"></p>
+          <canvas id="preview" aria-label="Card preview"></canvas>
+          <details><summary>Card layout (advanced)</summary>
+            <div class="row"><div><label for="lyW">Width</label><input type="number" id="lyW"></div><div><label for="lyH">Height</label><input type="number" id="lyH"></div></div>
+            <div class="row"><div><label for="lyNX">Name box x</label><input type="number" id="lyNX"></div><div><label for="lyNY">y</label><input type="number" id="lyNY"></div><div><label for="lyNW">width</label><input type="number" id="lyNW"></div><div><label for="lyNH">height</label><input type="number" id="lyNH"></div></div>
+            <div class="row"><div><label for="lyGX">Grid x</label><input type="number" id="lyGX"></div><div><label for="lyGY">y</label><input type="number" id="lyGY"></div><div><label for="lyGS">size</label><input type="number" id="lyGS"></div></div>
+            <div class="row"><div><label for="lyAcc">Marked colour</label><input type="text" id="lyAcc"></div><div><label for="lyFill">Cell fill</label><input type="text" id="lyFill"></div><div><label for="lyText">Text colour</label><input type="text" id="lyText"></div><div><label for="lyBorder">Cell border</label><input type="text" id="lyBorder"></div></div>
+            <p class="hint">Colours accept #hex, rgb()/rgba() or a colour name.</p>
+            <div class="btns"><button class="btn ghost" id="saveLayout" type="button">Save layout</button></div>
+            <p class="msg" id="lyMsg" role="status"></p>
+          </details>
+        </section>
+
+        <section class="panel">
+          <h2>Points and rules</h2>
+          <div class="row">
+            <div><label for="pCur">Currency name</label><input type="text" id="pCur"></div>
+            <div><label for="pStart">Starting</label><input type="number" id="pStart"></div>
+            <div><label for="pEntry">Entry bonus</label><input type="number" id="pEntry"></div>
+          </div>
+          <div class="row">
+            <div><label for="pBingo">Bingo reward</label><input type="number" id="pBingo"></div>
+            <div><label for="pBlack">Blackout reward</label><input type="number" id="pBlack"></div>
+            <div><label for="pMax">Max wager</label><input type="number" id="pMax"></div>
+          </div>
+          <div class="row">
+            <div><label for="pBM">Bingo wager x</label><input type="number" id="pBM"></div>
+            <div><label for="pKM">Blackout wager x</label><input type="number" id="pKM"></div>
+          </div>
+          <div class="row">
+            <div><label for="wDay">Weekly board resets on</label><select id="wDay"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></div>
+            <div><label for="wHour">at hour (server time, 0-23)</label><input type="number" id="wHour" min="0" max="23"></div>
+          </div>
+          <div class="checks"><label><input type="checkbox" id="pLate"> Allow joining after words are called</label></div>
+          <div class="checks"><label><input type="checkbox" id="pEarly"> Words called before someone joins count on their card (a late joiner can win right away)</label></div>
+          <div class="checks"><label><input type="checkbox" id="pClick"> Viewers can click squares to mark their card</label></div>
+          <div class="checks sub"><label id="pManualLbl"><input type="checkbox" id="pManual"> Don't auto-mark cards on the page (viewers mark their own squares)</label></div>
+          <p class="hint">A viewer's own marks fill in squares only on their screen and never count toward a bingo: points, bingos and blackouts are still worked out from the words that get called. The call list shows how many viewers marked each word. These two apply right away.</p>
+          <div class="btns"><button class="btn" id="savePoints" type="button">Save</button></div>
+          <p class="msg" id="pMsg" role="status"></p>
+          <h2 style="margin-top:20px">Give or take points</h2>
+          <div class="row"><div><label for="gpName">Chat name</label><input type="text" id="gpName"></div><div><label for="gpAmt">Amount (negative takes away)</label><input type="number" id="gpAmt" value="50"></div></div>
+          <div class="btns"><button class="btn ghost" id="gpBtn" type="button">Apply</button></div>
+          <p class="msg" id="gpMsg" role="status"></p>
+        </section>
+      </div>
+    </div>
+    <section class="panel" style="margin-top:18px">
+      <h2>Mod activity</h2>
+      <p class="hint" style="margin-top:0">Every word called or un-called, by whom and from where (newest first, last 100).</p>
+      <div class="logwrap"><table class="modlog"><thead><tr><th>Time</th><th>Who</th><th>Where</th><th>What</th></tr></thead><tbody id="modLog"></tbody></table></div>
+    </section>
+    <section class="panel" style="margin-top:18px">
+      <h2>Recent commands</h2>
+      <table><tbody id="chatLog"></tbody></table>
+    </section>
+  </div>
+  <p class="support">for support, message aosabisan on discord or twitter</p>
+</div>
+<script src="/card.js"></script>
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const el = (tag, props, ...kids) => { const e = document.createElement(tag); Object.assign(e, props || {}); for (const k of kids) e.append(k); return e; };
+const ROOM_BASE = location.pathname.replace(/[^/]*$/, '');   // "/roomname/"
+const PW_KEY = 'bingoPw:' + ROOM_BASE;
+let pw = ''; try { pw = sessionStorage.getItem(PW_KEY) || ''; } catch {}
+let D = null, formsFilled = false, timer;
+let modPwVisible = false;   // the mod password stays hidden until Show is pressed (never remembered across reloads)
+
+async function api(action, body, method) {
+  const r = await fetch('api/admin/' + action, { method: method || 'POST', headers: { 'x-admin-password': pw, 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401) { showLogin(j.error); throw new Error(j.error || 'Wrong password.'); }
+  if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+  return j;
+}
+function say(id, text, ok) { const m = $(id); m.textContent = text; m.className = 'msg ' + (ok ? 'ok' : text ? 'err' : ''); }
+async function run(msgId, fn, okText) { try { const r = await fn(); say(msgId, okText || 'Done.', true); await refresh(); return r; } catch (e) { say(msgId, e.message, false); } }
+
+function showLogin(err) { clearInterval(timer); $('app').hidden = true; $('login').hidden = false; $('loginMsg').textContent = err || ''; }
+$('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault(); pw = $('pw').value;
+  try { await refresh(); try { sessionStorage.setItem(PW_KEY, pw); } catch {} $('login').hidden = true; $('app').hidden = false; timer = setInterval(() => refresh().catch(() => {}), 4000); } catch {}
+});
+
+function fillForms(s) {
+  const c = s.channels, p = s.points, L = s.layout;
+  $('chTwitch').value = c.twitch; $('chKick').value = c.kick; $('chYoutube').value = c.youtube; $('chRumble').value = c.rumble;
+  $('chKickRoom').value = c.kickChatroomId;
+  $('phrases').value = s.phrases.join('\n');
+  $('pCur').value = p.currency; $('pStart').value = p.starting; $('pEntry').value = p.entryBonus; $('pBingo').value = p.bingoReward; $('pBlack').value = p.blackoutReward;
+  $('pMax').value = p.maxWager; $('pBM').value = p.bingoMultiplier; $('pKM').value = p.blackoutMultiplier; $('pTitle').value = s.title;
+  $('allowMods').checked = s.allowMods; $('allowVips').checked = s.allowVips;
+  const cm = s.commands || { enter: '!enter', start: '!start' };
+  // do not overwrite a box someone is typing in
+  if (document.activeElement !== $('cmdEnter') && document.activeElement !== $('cmdStart') && !cmdDirty) { $('cmdEnter').value = cm.enter; $('cmdStart').value = cm.start; }
+  if (!simTouched) $('simText').value = cm.enter + ' 20';
+  $('sharedMod').checked = s.sharedModLogin !== false; $('sharedBox').hidden = !$('sharedMod').checked;
+  $('bgColor').value = /^#[0-9a-f]{6}$/i.test(L.bgColor || '') ? L.bgColor : '#2a1043';
+  $('pLate').checked = s.allowLateEntry; $('pEarly').checked = s.countEarlyCalls;
+  $('pClick').checked = !!s.viewerMarking; $('pManual').checked = !!s.manualMarking; syncManual(); $('wDay').value = s.weeklyDay; $('wHour').value = s.weeklyHour;
+  $('lyW').value = L.width; $('lyH').value = L.height; $('lyNX').value = L.nameBox.x; $('lyNY').value = L.nameBox.y; $('lyNW').value = L.nameBox.w; $('lyNH').value = L.nameBox.h;
+  $('lyGX').value = L.grid.x; $('lyGY').value = L.grid.y; $('lyGS').value = L.grid.size; $('lyAcc').value = L.accent; $('lyFill').value = L.cellFill; $('lyText').value = L.textColor; $('lyBorder').value = L.cellBorder;
+}
+
+async function drawPreview() {
+  const L = D.settings.layout;
+  const cells = Array.from({ length: 25 }, (_, i) => i === 12 ? { free: true, marked: true } : { text: (D.settings.phrases[i] || 'Sample word'), marked: [0, 6, 18, 24, 7].includes(i) });
+  BingoCard.draw($('preview'), { name: 'SampleChatter', cells }, L, await BingoCard.loadBackground(D.settings.backgroundVersion, D.hasBackground), D.settings.title);
+}
+
+function render() {
+  const g = D.game;
+  $('gameLine').textContent = g.active ? `Game #${g.number} is live: ${g.players} players, ${g.called.length} of ${g.phrases.length} words called.` : (g.number ? `Game #${g.number} finished. Start a new one when you are ready.` : 'No game has been run yet.');
+  $('startBtn').disabled = g.active; $('endBtn').disabled = !g.active;
+  $('idleBox').hidden = !(g.closedIdle && !g.active);
+  if (g.closedIdle && !g.active) {
+    $('idleText').textContent = `Game #${g.number} was closed at ${new Date(g.closedAt).toLocaleTimeString()} because nobody joined and no words were called for ${D.room.gameIdleMinutes} minutes. Re-open it to carry on with the same cards (${g.reopensLeft} of 3 re-opens left today).`;
+    $('reopenBtn').disabled = g.reopensLeft <= 0;
+    $('reopenBtn').textContent = g.reopensLeft > 0 ? `Re-open game #${g.number}` : 'No re-opens left today';
+  }
+  $('idleHint').textContent = D.room.gameIdleMinutes ? `A running game closes by itself after ${D.room.gameIdleMinutes} minutes with nobody joining and no words called.` : '';
+  const counts = g.viewCounts || {};
+  const list = $('callList'); list.replaceChildren();
+  if (!g.active) list.append(el('p', { className: 'hint', textContent: 'Start a game to call words.' }));
+  const q = $('callFind').value.trim().toLowerCase();
+  g.phrases.forEach((t, i) => {
+    const n = i + 1, on = g.called.includes(n);
+    if (q && !t.toLowerCase().includes(q) && String(n) !== q) return;
+    const vc = !on && counts[n] ? el('span', { className: 'vc', title: 'Viewers who marked this on their own card', textContent: counts[n] + (counts[n] === 1 ? ' viewer' : ' viewers') }) : '';
+    const b = el('button', { type: 'button', className: on ? 'on' : '' }, el('i', { textContent: n }), (on ? '✓ ' : '') + t, vc);
+    b.onclick = () => run('gameMsg', () => api(on ? 'unmark' : 'mark', { word: String(n) }), (on ? 'Un-called' : 'Called') + ' #' + n);
+    list.append(b);
+  });
+  const tb = $('chatTable'); tb.replaceChildren();
+  for (const k of ['twitch', 'kick', 'youtube', 'rumble']) {
+    const s = D.chat[k] || {};
+    tb.append(el('tr', {}, el('td', { textContent: k }), el('td', {}, el('span', { className: 'st ' + (s.state || 'off'), textContent: s.state || 'off' }), s.error ? el('div', { className: 'hint', textContent: s.error }) : ''), el('td', { textContent: s.messages || 0 })));
+    if (k === 'rumble' && s.samples && s.samples.length) tb.append(el('tr', {}, el('td', { colSpan: 3 }, el('details', {}, el('summary', { textContent: 'Rumble raw sample' }), el('pre', { textContent: s.samples.join('\n\n'), style: 'white-space:pre-wrap;overflow-wrap:anywhere;font-size:.75rem' })))));
+  }
+  const lg = $('chatLog'); lg.replaceChildren();
+  for (const l of D.chatLog) lg.append(el('tr', {}, el('td', { textContent: new Date(l.t).toLocaleTimeString() }), el('td', { textContent: `${l.platform}/${l.name}: ${l.text}` }), el('td', { className: 'st ' + (l.ok ? 'connected' : 'error'), textContent: l.ok ? 'ok' : l.error })));
+  if (!D.chatLog.length) lg.append(el('tr', {}, el('td', { className: 'hint', textContent: 'No bingo commands seen yet.' })));
+  showModPw();
+  $('modLink').textContent = location.origin + ROOM_BASE + 'mod';
+  renderMods(); renderModLog(); renderBg();
+  renderRoom();
+  drawPreview();
+}
+
+function renderRoom() {
+  const r = D.room;
+  $('roomTag').textContent = r.name;
+  $('roomLink').textContent = location.origin + ROOM_BASE;
+  $('roomChat').textContent = r.chatPaused ? `Chat was paused: about ${r.chatPaused.rate} chat lines a minute were coming in with no one joining or playing. Having this page open turns it back on.`
+    : r.kind === 'dedicated' ? 'Chat stays connected all the time.'
+    : `Chat is ${r.chatAwake ? 'connected' : 'asleep'}. It stays connected while a game is running and for ${r.idleHours} hours after this page was last open, then sleeps until you open this page or start a game.`;
+  $('roomListed').checked = r.listed;
+  $('listedRow').hidden = r.kind === 'dedicated';
+  $('roomKind').textContent = r.kind === 'dedicated' ? 'This is a featured room: it is always listed on the home page.'
+    : (r.expireDays ? `Rooms that are not used for ${r.expireDays} days are removed.` : '');
+}
+$('roomListed').onchange = () => run('roomMsg', () => api('room', { listed: $('roomListed').checked }), 'Saved.');
+$('adminPwShow').onclick = () => { const i = $('adminPwNew'), on = i.type === 'password'; i.type = on ? 'text' : 'password'; $('adminPwShow').textContent = on ? 'Hide' : 'Show'; $('adminPwShow').setAttribute('aria-pressed', String(on)); };
+$('adminPwBtn').onclick = () => run('roomMsg', async () => {
+  const np = $('adminPwNew').value;
+  const r = await api('adminpassword', { password: np });
+  pw = np; try { sessionStorage.setItem(PW_KEY, pw); } catch {}
+  $('adminPwNew').value = ''; return r;
+}, 'Password changed. Use the new one next time you log in.');
+
+function showModPw() {
+  const c = $('modPwShown'), b = $('modPwToggle');
+  c.textContent = modPwVisible && D ? D.modPassword : '••••••••';
+  c.classList.toggle('masked', !modPwVisible);
+  b.textContent = modPwVisible ? 'Hide' : 'Show';
+  b.setAttribute('aria-pressed', String(modPwVisible));
+}
+
+async function refresh() {
+  D = await api('status');
+  if (!formsFilled) { fillForms(D.settings); thSet(D.settings.theme && D.settings.theme.bg ? D.settings.theme : null); loadTemplates(); formsFilled = true; }
+  render();
+}
+
+$('startBtn').onclick = () => run('gameMsg', () => api('start'), 'Game started.');
+$('reopenBtn').onclick = () => run('gameMsg', () => api('reopen'), 'Game re-opened with the same cards.');
+
+// ---- templates ----
+let TPL = { mine: [], site: [] };
+function renderTemplates() {
+  const sel = $('tplPick'), keep = sel.value; sel.replaceChildren();
+  const showHidden = $('tplShowHidden').checked;
+  const group = (label, items, source) => {
+    if (!items.length) return;
+    const g = el('optgroup', { label });
+    for (const t of items) g.append(el('option', { value: source + ':' + t.id, textContent: `${t.name} (${t.count} words)${t.hidden ? ' · hidden' : ''}` }));
+    sel.append(g);
+  };
+  group('Your templates', TPL.mine, 'room');
+  group('Site templates', TPL.site.filter((t) => showHidden || !t.hidden), 'site');
+  if (!sel.options.length) sel.append(el('option', { value: '', textContent: 'No templates yet' }));
+  if ([...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  syncTplButtons();
+}
+function picked() { const [source, id] = $('tplPick').value.split(':'); return id ? { source, id, t: (source === 'site' ? TPL.site : TPL.mine).find((x) => x.id === id) } : null; }
+function syncTplButtons() {
+  const p = picked();
+  $('tplLoad').disabled = !p; $('tplDel').hidden = !p || p.source !== 'room'; $('tplHide').hidden = !p || p.source !== 'site';
+  if (p && p.source === 'site') $('tplHide').textContent = p.t && p.t.hidden ? 'Unhide' : 'Hide';
+}
+async function loadTemplates() { try { TPL = await api('templates'); renderTemplates(); } catch {} }
+$('tplPick').onchange = syncTplButtons;
+$('tplShowHidden').onchange = renderTemplates;
+$('tplLoad').onclick = async () => {
+  const p = picked(); if (!p) return;
+  try { const r = await api('templateload', { source: p.source, id: p.id }); $('phrases').value = r.phrases.join('\n'); say('tplMsg', `Loaded "${r.name}" (${r.phrases.length} words) into the list. Press Save word list to use it.`, true); }
+  catch (e) { say('tplMsg', e.message); }
+};
+$('tplDel').onclick = async () => { const p = picked(); if (!p) return; try { await api('templatedelete', { id: p.id }); say('tplMsg', 'Template deleted.', true); await loadTemplates(); } catch (e) { say('tplMsg', e.message); } };
+$('tplHide').onclick = async () => { const p = picked(); if (!p || !p.t) return; try { await api('templatehide', { id: p.id, hidden: !p.t.hidden }); say('tplMsg', p.t.hidden ? 'Shown again.' : 'Hidden from your list. Tick "Show site templates I hid" to see it.', true); await loadTemplates(); } catch (e) { say('tplMsg', e.message); } };
+$('tplSave').onclick = async () => {
+  try { const r = await api('templatesave', { name: $('tplName').value, phrases: $('phrases').value.split(/\r?\n/) }); say('tplMsg', r.replaced ? 'Template updated.' : 'Template saved.', true); $('tplName').value = ''; await loadTemplates(); }
+  catch (e) { say('tplMsg', e.message); }
+};
+
+// ---- page colours ----
+const TH_DEFAULT = { bg: '#130f1f', panel: '#1d1830', accent: '#ff4d6d', text: '#f4f1fb' };
+const TH_PRESETS = [
+  ['Night (site)', null], ['Ocean', { bg: '#0b1726', panel: '#12263b', accent: '#3ec1ff', text: '#eaf6ff' }],
+  ['Forest', { bg: '#0f1a12', panel: '#18291c', accent: '#5be0a0', text: '#eefaf1' }], ['Sunset', { bg: '#1f0f14', panel: '#2e1720', accent: '#ff8a4c', text: '#fff1ea' }],
+  ['Grape', { bg: '#160f24', panel: '#241a3a', accent: '#c77dff', text: '#f5edff' }], ['Light', { bg: '#f4f2fa', panel: '#ffffff', accent: '#d6336c', text: '#1d1830' }],
+];
+const thInputs = { bg: 'thBg', panel: 'thPanel', accent: 'thAccent', text: 'thText' };
+function thSet(t) { for (const [k, id] of Object.entries(thInputs)) $(id).value = (t && t[k]) || TH_DEFAULT[k]; thPreview(); }
+function thPreview() {
+  const v = Object.fromEntries(Object.entries(thInputs).map(([k, id]) => [k, $(id).value]));
+  $('thPrev').style.background = v.bg; $('thPrevPanel').style.background = v.panel; $('thPrevTitle').style.color = v.text;
+  $('thPrevMuted').style.color = `color-mix(in srgb, ${v.text} 62%, ${v.bg})`;
+  $('thPrevBtn').style.background = v.accent;
+  const n = parseInt(v.accent.slice(1), 16), l = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  $('thPrevBtn').style.color = l > 0.6 ? '#111' : '#fff';
+}
+for (const id of Object.values(thInputs)) $(id).addEventListener('input', thPreview);
+for (const [label, t] of TH_PRESETS) {
+  const sw = (t || TH_DEFAULT);
+  const b = el('button', { type: 'button' }, el('i'), el('i'), label);
+  b.children[0].style.background = sw.bg; b.children[1].style.background = sw.accent;
+  b.onclick = () => thSet(t || TH_DEFAULT);
+  $('thPresets').append(b);
+}
+$('thSave').onclick = () => run('thMsg', () => api('settings', { theme: Object.fromEntries(Object.entries(thInputs).map(([k, id]) => [k, $(id).value])) }), 'Saved. Your room page uses these colours now.');
+$('thReset').onclick = () => run('thMsg', async () => { const r = await api('settings', { theme: { bg: '', panel: '', accent: '', text: '' } }); thSet(null); return r; }, "Saved. Your room page uses the site's colours again.");
+$('endBtn').onclick = () => run('gameMsg', () => api('end'), 'Game ended.');
+$('savePhrases').onclick = () => run('phrasesMsg', () => api('phrases', { phrases: $('phrases').value.split(/\r?\n/) }), 'Word list saved. It applies to the next game.');
+$('simBtn').onclick = async () => {
+  try {
+    const r = await api('simulate', { name: $('simName').value, platform: $('simPlat').value, text: $('simText').value, mod: $('simMod').checked, vip: $('simVip').checked, owner: $('simOwner').checked });
+    say('simMsg', r.result.ok ? 'Worked.' : r.result.error, r.result.ok); await refresh();
+  } catch (e) { say('simMsg', e.message); }
+};
+$('saveChannels').onclick = () => run('chMsg', () => api('settings', { channels: { twitch: $('chTwitch').value, kick: $('chKick').value, youtube: $('chYoutube').value, rumble: $('chRumble').value, kickChatroomId: $('chKickRoom').value } }), 'Saved. Reconnecting, watch the status table.');
+$('saveTitle').onclick = () => run('titleMsg', () => api('settings', { title: $('pTitle').value }), 'Saved. The page and new cards show it now.');
+$('pTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('saveTitle').click(); });
+$('savePoints').onclick = () => run('pMsg', () => api('settings', {
+  allowLateEntry: $('pLate').checked, weeklyDay: $('wDay').value, weeklyHour: $('wHour').value,
+  points: { currency: $('pCur').value, starting: $('pStart').value, entryBonus: $('pEntry').value, bingoReward: $('pBingo').value, blackoutReward: $('pBlack').value, maxWager: $('pMax').value, bingoMultiplier: $('pBM').value, blackoutMultiplier: $('pKM').value },
+}), 'Saved.');
+$('saveLayout').onclick = () => run('lyMsg', () => api('settings', { layout: { width: $('lyW').value, height: $('lyH').value, nameBox: { x: $('lyNX').value, y: $('lyNY').value, w: $('lyNW').value, h: $('lyNH').value }, grid: { x: $('lyGX').value, y: $('lyGY').value, size: $('lyGS').value }, accent: $('lyAcc').value, cellFill: $('lyFill').value, textColor: $('lyText').value, cellBorder: $('lyBorder').value } }), 'Layout saved.');
+function syncManual() { const on = $('pClick').checked; $('pManual').disabled = !on; if (!on) $('pManual').checked = false; $('pManualLbl').classList.toggle('off', !on); $('pManualLbl').title = on ? '' : 'Turn on "Viewers can click squares" first'; }
+for (const id of ['pClick', 'pManual']) $(id).onchange = () => { syncManual(); run('pMsg', () => api('settings', { viewerMarking: $('pClick').checked, manualMarking: $('pManual').checked }), $('pClick').checked ? ($('pManual').checked ? 'Saved. Cards on the page are no longer filled in; viewers mark their own.' : 'Saved. Viewers can now click squares on their card.') : 'Saved. Viewer marking is off.'); };
+$('pEarly').onchange = () => run('pMsg', () => api('settings', { countEarlyCalls: $('pEarly').checked }), 'Saved. Applies to people who join from now on.');
+let cmdDirty = false, simTouched = false;
+for (const id of ['cmdEnter', 'cmdStart']) { $(id).addEventListener('input', () => { cmdDirty = true; }); $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') $('cmdSave').click(); }); }
+$('simText').addEventListener('input', () => { simTouched = true; });
+async function saveCommands(enter, start) {
+  try {
+    const r = await api('commands', { enter, start });
+    cmdDirty = false; $('cmdEnter').value = r.commands.enter; $('cmdStart').value = r.commands.start;
+    if (!simTouched) $('simText').value = r.commands.enter + ' 20';
+    say('cmdMsg', `Saved. Viewers type ${r.commands.enter} to get a card, and you or a mod type ${r.commands.start} to start a game.`, true);
+    await refresh();
+  } catch (e) { say('cmdMsg', e.message); }
+}
+$('cmdSave').onclick = () => saveCommands($('cmdEnter').value, $('cmdStart').value);
+$('cmdDefault').onclick = () => saveCommands('!enter', '!start');
+for (const id of ['allowMods', 'allowVips']) $(id).onchange = () => run('whoMsg', () => api('settings', { allowMods: $('allowMods').checked, allowVips: $('allowVips').checked }), 'Saved. Applies right away.');
+$('modPwBtn').onclick = () => run('modPwMsg', async () => { const r = await api('modpassword', { password: $('modPwNew').value }); $('modPwNew').value = ''; return r; }, 'Mod password changed. Press Show to see it.');
+$('modPwToggle').onclick = () => { modPwVisible = !modPwVisible; showModPw(); };
+$('modPwCopy').onclick = async () => {
+  const b = $('modPwCopy');
+  if (!D) return;
+  try { await navigator.clipboard.writeText(D.modPassword); b.textContent = 'Copied'; }
+  catch { b.textContent = 'Copy failed: press Show and copy it by hand'; }
+  setTimeout(() => (b.textContent = 'Copy'), 2000);
+};
+$('modPwNewToggle').onclick = () => {
+  const i = $('modPwNew'), show = i.type === 'password';
+  i.type = show ? 'text' : 'password';
+  $('modPwNewToggle').textContent = show ? 'Hide' : 'Show';
+  $('modPwNewToggle').setAttribute('aria-pressed', String(show));
+};
+$('callFind').addEventListener('input', () => D && render());
+$('logoutBtn').onclick = () => {
+  pw = ''; D = null; formsFilled = false; modPwVisible = false;
+  try { sessionStorage.removeItem(PW_KEY); } catch {}
+  $('pw').value = ''; showLogin('Logged out.');
+};
+$('gpBtn').onclick = () => run('gpMsg', () => api('givepoints', { name: $('gpName').value, amount: $('gpAmt').value }), 'Points updated.');
+// ---- card background: a colour for every room, an image for featured rooms ----
+function renderBg() {
+  const allowed = !!D.backgroundAllowed;
+  $('bgImageBox').hidden = !allowed;
+  $('bgNote').textContent = allowed
+    ? (D.hasBackground ? 'The image is used; the colour shows only when there is no image.' : 'No image yet, so the colour above is used.')
+    : 'Background images are available for featured rooms.';
+}
+$('bgColor').addEventListener('input', () => { if (D) { D.settings.layout.bgColor = $('bgColor').value; drawPreview(); } });
+$('bgColorSave').onclick = () => run('bgMsg', () => api('settings', { layout: { bgColor: $('bgColor').value } }), 'Card background colour saved.');
+$('bgColorReset').onclick = () => run('bgMsg', async () => { const r = await api('settings', { layout: { bgColor: '' } }); $('bgColor').value = '#2a1043'; return r; }, 'Back to the default background.');
+// Shrink the picture to the card's size (at most 2000 px) and save it as a JPEG, so phone photos and big screenshots
+// fit well under the upload limit (and under the limits of any proxy in front of the site).
+function shrinkImage(file, L) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const k = Math.min(1, 2000 / Math.max(L.width, L.height));
+      const W = Math.round(L.width * k), H = Math.round(L.height * k);
+      const s = Math.max(W / img.naturalWidth, H / img.naturalHeight);   // cover the card, like the card does
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+      g.drawImage(img, (W - img.naturalWidth * s) / 2, (H - img.naturalHeight * s) / 2, img.naturalWidth * s, img.naturalHeight * s);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not read that image.'))), 'image/jpeg', 0.88);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file is not an image this browser can open. Use a PNG, JPG or WEBP.')); };
+    img.src = url;
+  });
+}
+$('bgUpload').onclick = async () => {
+  const f = $('bgFile').files[0]; if (!f) return say('bgMsg', 'Choose an image first.');
+  try {
+    say('bgMsg', 'Preparing the image…', true);
+    const blob = await shrinkImage(f, D.settings.layout);
+    const r = await fetch('api/admin/background', { method: 'POST', headers: { 'x-admin-password': pw, 'Content-Type': 'image/jpeg' }, body: blob });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || (r.status === 413 ? 'That image is too big for the server.' : `Upload failed (error ${r.status}).`));
+    say('bgMsg', `Background updated (${Math.round(blob.size / 1024)} KB).`, true); $('bgFile').value = ''; await refresh();
+  } catch (e) { say('bgMsg', e.message === 'Failed to fetch' ? 'Upload failed: the connection was cut off. The image may be too big for the server.' : e.message); }
+};
+
+// ---- named mod logins ----
+const agoText = (t) => { if (!t) return 'never'; const s = (Date.now() - t) / 1000; if (s < 90) return 'just now'; if (s < 5400) return Math.round(s / 60) + ' min ago'; if (s < 129600) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' days ago'; };
+function showNewModPw(r, what) {
+  const box = $('modNew'); box.hidden = false;
+  const code = el('code', { textContent: r.password }), copy = el('button', { type: 'button', className: 'btn ghost sm', textContent: 'Copy' });
+  copy.onclick = async () => { try { await navigator.clipboard.writeText(r.password); copy.textContent = 'Copied'; } catch { copy.textContent = 'Select and copy it'; } };
+  box.replaceChildren(`${what} for ${r.name}: `, code, ' ', copy, el('br'), 'Send it to them with the mod page link. It is only shown now.');
+}
+function renderMods() {
+  const rows = $('modRows'); rows.replaceChildren();
+  for (const m of D.mods || []) {
+    const btn = (text, cls, fn) => { const b = el('button', { type: 'button', className: 'btn sm ' + cls, textContent: text }); b.onclick = fn; return b; };
+    rows.append(el('tr', {}, el('td', { textContent: m.name }), el('td', { textContent: agoText(m.lastUsed) }), el('td', { className: 'n', textContent: m.calls }),
+      el('td', { className: 'acts' },
+        btn('New password', 'ghost', async () => { try { showNewModPw(await api('modreset', { id: m.id }), 'New password'); say('modMsg', 'Their old password stopped working.', true); } catch (e) { say('modMsg', e.message); } }),
+        btn('Remove', 'danger', async () => { try { await api('modremove', { id: m.id }); $('modNew').hidden = true; say('modMsg', `${m.name} can no longer log in.`, true); await refresh(); } catch (e) { say('modMsg', e.message); } }))));
+  }
+  $('modNone').hidden = (D.mods || []).length > 0;
+}
+$('modAdd').onclick = async () => {
+  try { const r = await api('modadd', { name: $('modName').value }); $('modName').value = ''; showNewModPw(r, 'Password'); say('modMsg', '', true); await refresh(); }
+  catch (e) { say('modMsg', e.message); }
+};
+$('modName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('modAdd').click(); });
+$('sharedMod').onchange = () => { $('sharedBox').hidden = !$('sharedMod').checked; run('modPwMsg', () => api('settings', { sharedModLogin: $('sharedMod').checked }), $('sharedMod').checked ? 'The shared password works again.' : 'The shared password no longer works. Only named mod logins do.'); };
+function renderModLog() {
+  const tb = $('modLog'); tb.replaceChildren();
+  for (const l of D.modLog || []) {
+    tb.append(el('tr', {}, el('td', { textContent: new Date(l.t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }),
+      el('td', { textContent: l.who }), el('td', { textContent: l.source }), el('td', { textContent: l.n ? `${l.action} #${l.n} ${l.word || ''} (game ${l.game})` : `${l.action} (game ${l.game})` })));
+  }
+  if (!(D.modLog || []).length) tb.append(el('tr', {}, el('td', { colSpan: 4, className: 'hint', textContent: 'Nothing yet.' })));
+}
+$('bgRemove').onclick = () => run('bgMsg', () => api('background', {}, 'DELETE'), 'Background removed.');
+
+(async () => {
+  if (!pw) return showLogin();
+  try { await refresh(); $('app').hidden = false; timer = setInterval(() => refresh().catch(() => {}), 4000); } catch { showLogin(); }
+})();
+</script>
+</body>
+</html>
