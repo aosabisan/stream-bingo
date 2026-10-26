@@ -54,12 +54,51 @@ const t = (name, fn) => Promise.resolve().then(fn).then(() => { pass++; console.
     assert.strictEqual(game.handleChat(msg('alice', '!enter 40')).ok, true);
     assert.strictEqual(S().accounts['twitch:alice'].points, 100 - 40 + 10);
     assert.strictEqual(game.handleChat(msg('alice', '!enter')).ok, false);          // one card each
-    assert.strictEqual(game.handleChat(msg('bob', '!enter 999')).ok, false);        // more than they have
     assert.strictEqual(game.handleChat(msg('bob', '!enter abc')).ok, false);
     assert.strictEqual(game.handleChat(msg('bob', '!enter all', {}, 'kick', 77)).ok, true);
     assert.strictEqual(S().accounts['kick:77'].points, 10);
   });
-  await t('card has 24 distinct words plus a free centre', () => {
+  await t('bets: glued on (!enter10), more than the balance bets it all, and can be added while the card has under 3 squares', () => {
+    const g3 = rooms.create('bet-room').entry.game, S3 = () => g3.state, acct = (n) => S3().accounts['twitch:' + n];
+    g3.state.settings.points.maxWager = 1000;
+    g3.handleChat(msg('m', '!start', { mod: true }));
+    // !enter10 (no space) bets 10; balance 100 - 10 + 10 entry bonus
+    assert.strictEqual(g3.handleChat(msg('ann', '!enter10')).ok, true);
+    assert.strictEqual(S3().game.players['twitch:ann'].wager, 10); assert.strictEqual(acct('ann').points, 100);
+    // more than the balance: bets the whole balance instead of being refused
+    const r = g3.handleChat(msg('bo', '!enter 999'));
+    assert.strictEqual(r.ok, true); assert.strictEqual(r.wager, 100); assert.strictEqual(acct('bo').points, 10);
+    assert.strictEqual(g3.handleChat(msg('cy', '!ENTERALL')).wager, 100, 'glued "all", any case');
+    // not a bet: refused with a hint, or ignored when glued to the command
+    assert.match(g3.handleChat(msg('dee', '!enter abc')).error, /!enter 50/);
+    assert.strictEqual(g3.handleChat(msg('dee', '!enterabc')), null);
+    assert.strictEqual(S3().game.players['twitch:dee'], undefined);
+    // adding to a bet: again with a bet adds to the wager, capped by the balance
+    assert.strictEqual(g3.handleChat(msg('ann', '!enter 30')).added, 30);
+    assert.strictEqual(S3().game.players['twitch:ann'].wager, 40); assert.strictEqual(acct('ann').points, 70);
+    assert.strictEqual(g3.handleChat(msg('ann', '!enter500')).added, 70, 'more than the balance adds all of it');
+    assert.strictEqual(acct('ann').points, 0); assert.strictEqual(S3().game.players['twitch:ann'].wager, 110);
+    assert.match(g3.handleChat(msg('ann', '!enter 5')).error, /no points left/);
+    assert.match(g3.handleChat(msg('bo', '!enter')).error, /already has a card/, 'no bet: still one card each');
+    assert.strictEqual(Object.keys(S3().game.players).length, 3, 'adding never makes a second card');
+    // the room's max wager caps the total
+    g3.state.settings.points.maxWager = 105;
+    assert.strictEqual(g3.handleChat(msg('bo', '!enter 50')).added, 5, 'only up to the max total');
+    assert.strictEqual(S3().game.players['twitch:bo'].wager, 105);
+    assert.match(g3.handleChat(msg('bo', '!enter 50')).error, /most allowed/);
+    g3.state.settings.points.maxWager = 1000;
+    // once the card has 3 or more squares filled (the free square counts), no more adding
+    const card = S3().game.players['twitch:bo'].card.filter((n) => n !== 0);
+    g3.mark(String(card[0]), true);   // free + 1 = 2 filled: still allowed
+    assert.strictEqual(g3.handleChat(msg('bo', '!enter 1')).ok, true);
+    g3.mark(String(card[1]), true);   // free + 2 = 3 filled: closed
+    assert.match(g3.handleChat(msg('bo', '!enter 1')).error, /3 squares filled/);
+    // a renamed join command works glued on too
+    g3.handleChat(msg('m', '!bingoend', { mod: true })); g3.setCommands({ enter: '!bingo' }); g3.handleChat(msg('m', '!start', { mod: true }));
+    assert.strictEqual(g3.handleChat(msg('eve', '!bingo25')).wager, 25);
+    rooms.remove('bet-room');
+  });
+    await t('card has 24 distinct words plus a free centre', () => {
     const c = S().game.players['twitch:alice'].card;
     assert.strictEqual(c.length, 25); assert.strictEqual(c[12], 0);
     assert.strictEqual(new Set(c.filter((x) => x)).size, 24);
