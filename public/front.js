@@ -29,7 +29,7 @@ function renderState() {
   const how = $('how'); how.replaceChildren();
   const where = Object.entries(S.channels).filter(([, v]) => v).map(([k]) => PLAT[k]).join(', ');
   [`Type ${E} in chat to get a card${where ? ' (' + where + ')' : ''}. You get ${r.entryBonus} ${cur} for joining and start with ${r.starting}.`,
-   `Add a wager: ${E} 50 or ${E} all (up to ${r.maxWager}). A bingo pays ${r.bingoReward} + wager x${r.bingoMultiplier}. A blackout pays ${r.blackoutReward} + wager x${r.blackoutMultiplier} more. No bingo, no wager back.`,
+   `Add a wager: ${E} 50 (or ${E}50) or ${E} all, up to ${r.maxWager}. Betting more than you have bets everything you have. Already in? Type it again to add to your bet while your card has fewer than 3 squares filled. A bingo pays ${r.bingoReward} + wager x${r.bingoMultiplier}. A blackout pays ${r.blackoutReward} + wager x${r.blackoutMultiplier} more. No bingo, no wager back.`,
    'Mods and VIPs call words with !mark. Click your name in the top 20, or search for it, to watch your card fill in.'].forEach((t) => how.append(el('li', { textContent: t })));
 }
 

@@ -264,28 +264,54 @@ function endGame() {
   return s;
 }
 
+// What a viewer asked to bet: 0 for no bet, a number, or Infinity for "all"; null when it is not a bet.
+function parseBet(arg) {
+  const w = String(arg || '').trim().split(/\s+/)[0].toLowerCase();
+  if (!w) return 0;
+  if (w === 'all') return Infinity;
+  return /^\d{1,12}$/.test(w) ? parseInt(w, 10) : null;
+}
+// A player may add to their bet while their card has fewer than this many squares filled (the free square counts).
+const ADD_BET_BELOW = 3;
+
 function enter(platform, userId, name, arg) {
-  const g = state.game;
+  const g = state.game, E = cmds().enter;
   if (!g.active) throw new Error('No bingo game is running.');
-  if (!state.settings.allowLateEntry && g.called.length) throw new Error('Entries are closed for this game.');
+  const want = parseBet(arg);
+  if (want === null) throw new Error(`Use ${E}, ${E} 50 or ${E} all`);
   const key = keyOf(platform, userId, name);
-  if (g.players[key]) throw new Error(`${name} already has a card.`);
+  if (g.players[key]) return addBet(g, key, want);
+  if (!state.settings.allowLateEntry && g.called.length) throw new Error('Entries are closed for this game.');
   const a = getAccount(key, name, platform);
-  let wager = 0;
-  const w = String(arg || '').trim().split(/\s+/)[0];
-  if (w) {
-    wager = w.toLowerCase() === 'all' ? Math.min(a.points, P().maxWager) : /^\d+$/.test(w) ? parseInt(w, 10) : NaN;
-    if (Number.isNaN(wager)) throw new Error(`Use ${cmds().enter} or ${cmds().enter} 50`);
-    if (wager > P().maxWager) throw new Error(`Max wager is ${P().maxWager}.`);
-    if (wager > a.points) throw new Error(`${name} only has ${a.points} ${P().currency}.`);
-  }
+  // a bet bigger than the balance (or the room's max) bets as much as is allowed instead of being refused
+  const wager = Math.max(0, Math.min(want, a.points, P().maxWager));
   addPoints(a, -wager + P().entryBonus);
   g.players[key] = { name, platform, card: newCard(g.phrases.length), wager, ignored: state.settings.countEarlyCalls ? [] : [...g.called], bingo: false, blackout: false };
   touch(); g.lastActivity = Date.now();
   feedAdd('join', `${name} joined${wager ? ` with a ${wager} ${P().currency} wager` : ''}`);
   const wins = checkWinners(g, [key]);   // nobody else's card changed
   save();
-  return { key, wins };
+  return { key, wins, wager };
+}
+
+// Someone who already has a card types the join command with a bet again: it is added to their wager, while their card
+// has fewer than ADD_BET_BELOW squares filled. Capped by their balance and by the room's max wager (the total).
+function addBet(g, key, want) {
+  const p = g.players[key], E = cmds().enter, cur = P().currency;
+  if (!want) throw new Error(`${p.name} already has a card. To add to the bet, type ${E} 50 while the card has fewer than ${ADD_BET_BELOW} squares filled.`);
+  const filled = countMarked(g, p);
+  if (filled >= ADD_BET_BELOW) throw new Error(`${p.name}'s card has ${filled} squares filled. Bets can only be added while it has fewer than ${ADD_BET_BELOW}.`);
+  const a = getAccount(key, p.name, p.platform);
+  const room = P().maxWager - p.wager;
+  if (room <= 0) throw new Error(`${p.name} already bet the most allowed (${P().maxWager} ${cur}).`);
+  if (a.points <= 0) throw new Error(`${p.name} has no ${cur} left to bet.`);
+  const added = Math.min(want, a.points, room);
+  addPoints(a, -added);
+  p.wager += added;
+  touch(); g.lastActivity = Date.now();
+  feedAdd('join', `${p.name} added ${added} ${cur} to their wager (now ${p.wager})`);
+  save();
+  return { key, wins: [], added, wager: p.wager };
 }
 
 function resolve(g, input) {
@@ -364,6 +390,11 @@ function handleChat(m) {
     const c = cmds();
     if (cmd === c.enter) return { ok: true, ...enter(m.platform, m.userId, m.name, arg) };
     if (cmd === c.start) { if (!isMod) return null; startGame(); logAction(m.name, where, 'started a game'); return { ok: true }; }
+    // the join command with the bet stuck on, like !enter10 or !enterall
+    if (cmd.startsWith(c.enter)) {
+      const glued = cmd.slice(c.enter.length);
+      if (/^(\d{1,12}|all)$/.test(glued)) return { ok: true, ...enter(m.platform, m.userId, m.name, glued) };
+    }
     switch (cmd) {
       case '!mark': if (!canMark) return null; return { ok: true, ...mark(arg, true, m.name, where) };
       case '!unmark': if (!canMark) return null; return { ok: true, ...mark(arg, false, m.name, where) };

@@ -38,7 +38,11 @@ Because that room keeps the old password, **set `SITE_ADMIN_PASSWORD` to a new p
 uses the old admin password for that room can also open `/site-admin` and every other room.
 
 ## What viewers do
-- `!enter` in chat to get a card, or `!enter 50` / `!enter all` to wager points.
+- `!enter` in chat to get a card, or `!enter 50` / `!enter all` to wager points. The space is optional: `!enter50` and
+  `!enterall` work too (also with a renamed join command, like `!bingo50`).
+- A bet bigger than the player's balance bets their whole balance, and one above the room's max wager bets the max.
+- Already in the game? Typing `!enter 50` again adds 50 to the bet, while the card has fewer than 3 squares filled (the free
+  centre counts, so that is up to one called word). The total bet still can't go over the max wager.
 - Open the room's page, type their chat name, and see their card fill in. Links like `/<room>/?u=name` can be shared.
 
 ## What mods and VIPs do (in any of the four chats)
